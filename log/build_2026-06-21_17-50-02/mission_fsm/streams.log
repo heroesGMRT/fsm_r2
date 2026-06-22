@@ -1,0 +1,26 @@
+[1.552s] Invoking command in '/home/heroes/Workspace/fsm_r2/mission_fsm': PYTHONPATH=/home/heroes/Workspace/fsm_r2/build/mission_fsm/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/mission_fsm build --build-base /home/heroes/Workspace/fsm_r2/build/mission_fsm/build install --record /home/heroes/Workspace/fsm_r2/build/mission_fsm/install.log --single-version-externally-managed install_data
+[2.170s] running egg_info
+[2.171s] writing ../build/mission_fsm/mission_fsm.egg-info/PKG-INFO
+[2.172s] writing dependency_links to ../build/mission_fsm/mission_fsm.egg-info/dependency_links.txt
+[2.172s] writing entry points to ../build/mission_fsm/mission_fsm.egg-info/entry_points.txt
+[2.173s] writing requirements to ../build/mission_fsm/mission_fsm.egg-info/requires.txt
+[2.173s] writing top-level names to ../build/mission_fsm/mission_fsm.egg-info/top_level.txt
+[2.179s] reading manifest file '../build/mission_fsm/mission_fsm.egg-info/SOURCES.txt'
+[2.181s] writing manifest file '../build/mission_fsm/mission_fsm.egg-info/SOURCES.txt'
+[2.181s] running build
+[2.183s] running build_py
+[2.184s] copying mission_fsm/mock_nav_server.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm
+[2.187s] running install
+[2.187s] running install_lib
+[2.191s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/mock_nav_server.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm
+[2.194s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/mock_nav_server.py to mock_nav_server.cpython-310.pyc
+[2.195s] running install_data
+[2.196s] running install_egg_info
+[2.201s] removing '/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm-0.0.0-py3.10.egg-info' (and everything under it)
+[2.202s] Copying ../build/mission_fsm/mission_fsm.egg-info to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm-0.0.0-py3.10.egg-info
+[2.204s] running install_scripts
+[2.253s] Installing fsm_node script to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/mission_fsm
+[2.254s] Installing mock_nav_server script to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/mission_fsm
+[2.254s] Installing test_signal_pub script to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/mission_fsm
+[2.256s] writing list of installed files to '/home/heroes/Workspace/fsm_r2/build/mission_fsm/install.log'
+[2.335s] Invoked command in '/home/heroes/Workspace/fsm_r2/mission_fsm' returned '0': PYTHONPATH=/home/heroes/Workspace/fsm_r2/build/mission_fsm/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/mission_fsm build --build-base /home/heroes/Workspace/fsm_r2/build/mission_fsm/build install --record /home/heroes/Workspace/fsm_r2/build/mission_fsm/install.log --single-version-externally-managed install_data

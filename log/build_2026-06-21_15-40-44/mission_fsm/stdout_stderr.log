@@ -1,0 +1,23 @@
+running egg_info
+writing ../build/mission_fsm/mission_fsm.egg-info/PKG-INFO
+writing dependency_links to ../build/mission_fsm/mission_fsm.egg-info/dependency_links.txt
+writing entry points to ../build/mission_fsm/mission_fsm.egg-info/entry_points.txt
+writing requirements to ../build/mission_fsm/mission_fsm.egg-info/requires.txt
+writing top-level names to ../build/mission_fsm/mission_fsm.egg-info/top_level.txt
+reading manifest file '../build/mission_fsm/mission_fsm.egg-info/SOURCES.txt'
+writing manifest file '../build/mission_fsm/mission_fsm.egg-info/SOURCES.txt'
+running build
+running build_py
+copying mission_fsm/task/states/done.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states
+running install
+running install_lib
+copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states/done.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states
+byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states/done.py to done.cpython-310.pyc
+running install_data
+running install_egg_info
+removing '/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm-0.0.0-py3.10.egg-info' (and everything under it)
+Copying ../build/mission_fsm/mission_fsm.egg-info to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm-0.0.0-py3.10.egg-info
+running install_scripts
+Installing fsm_node script to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/mission_fsm
+Installing test_signal_pub script to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/mission_fsm
+writing list of installed files to '/home/heroes/Workspace/fsm_r2/build/mission_fsm/install.log'

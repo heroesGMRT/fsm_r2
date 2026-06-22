@@ -1,0 +1,10 @@
+ros2 topic pub --once /fsm/signal std_msgs/msg/String "{data: 'spear_found'}"
+
+ros2 topic pub --once /fsm/signal std_msgs/msg/String "{data: 'search_failed'}"
+
+ros2 topic pub --once /fsm/signal std_msgs/msg/String "{data: 'recovery_done'}"
+
+ros2 topic pub --once /fsm/signal std_msgs/msg/String "{data: 'task_complete'}"
+
+ros2 topic pub --once /fsm/signal std_msgs/msg/String "{data: 'navigate'}"
+

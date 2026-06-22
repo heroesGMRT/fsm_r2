@@ -1,0 +1,5 @@
+[console_scripts]
+fsm_node = mission_fsm.fsm_node:main
+mock_nav_server = mission_fsm.mock_nav_server:main
+test_signal_pub = mission_fsm.test_signal_pub:main
+

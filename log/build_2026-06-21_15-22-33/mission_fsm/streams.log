@@ -1,0 +1,56 @@
+[1.600s] Invoking command in '/home/heroes/Workspace/fsm_r2/mission_fsm': PYTHONPATH=/home/heroes/Workspace/fsm_r2/build/mission_fsm/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/mission_fsm build --build-base /home/heroes/Workspace/fsm_r2/build/mission_fsm/build install --record /home/heroes/Workspace/fsm_r2/build/mission_fsm/install.log --single-version-externally-managed install_data
+[2.192s] running egg_info
+[2.193s] writing ../build/mission_fsm/mission_fsm.egg-info/PKG-INFO
+[2.194s] writing dependency_links to ../build/mission_fsm/mission_fsm.egg-info/dependency_links.txt
+[2.194s] writing entry points to ../build/mission_fsm/mission_fsm.egg-info/entry_points.txt
+[2.195s] writing requirements to ../build/mission_fsm/mission_fsm.egg-info/requires.txt
+[2.195s] writing top-level names to ../build/mission_fsm/mission_fsm.egg-info/top_level.txt
+[2.200s] reading manifest file '../build/mission_fsm/mission_fsm.egg-info/SOURCES.txt'
+[2.202s] writing manifest file '../build/mission_fsm/mission_fsm.egg-info/SOURCES.txt'
+[2.203s] running build
+[2.203s] running build_py
+[2.203s] copying mission_fsm/state_machine.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm
+[2.203s] copying mission_fsm/fsm_node.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm
+[2.204s] copying mission_fsm/task/task_manager.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task
+[2.205s] creating /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/ui
+[2.205s] copying mission_fsm/ui/__init__.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/ui
+[2.205s] copying mission_fsm/ui/dashboard.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/ui
+[2.206s] copying mission_fsm/interfaces/nav_interface.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/interfaces
+[2.207s] copying mission_fsm/task/states/area_1.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states
+[2.208s] copying mission_fsm/task/states/__init__.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states
+[2.208s] copying mission_fsm/task/states/area_2.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states
+[2.208s] copying mission_fsm/task/states/area_3.py -> /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states
+[2.209s] running install
+[2.210s] running install_lib
+[2.212s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states/area_1.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states
+[2.212s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states/__init__.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states
+[2.213s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states/area_2.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states
+[2.213s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/states/area_3.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states
+[2.213s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/task/task_manager.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task
+[2.214s] creating /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/ui
+[2.214s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/ui/__init__.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/ui
+[2.214s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/ui/dashboard.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/ui
+[2.215s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/interfaces/nav_interface.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/interfaces
+[2.215s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/state_machine.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm
+[2.216s] copying /home/heroes/Workspace/fsm_r2/build/mission_fsm/build/lib/mission_fsm/fsm_node.py -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm
+[2.218s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states/area_1.py to area_1.cpython-310.pyc
+[2.219s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states/__init__.py to __init__.cpython-310.pyc
+[2.220s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states/area_2.py to area_2.cpython-310.pyc
+[2.220s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/states/area_3.py to area_3.cpython-310.pyc
+[2.221s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/task/task_manager.py to task_manager.cpython-310.pyc
+[2.222s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/ui/__init__.py to __init__.cpython-310.pyc
+[2.223s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/ui/dashboard.py to dashboard.cpython-310.pyc
+[2.228s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/interfaces/nav_interface.py to nav_interface.cpython-310.pyc
+[2.230s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/state_machine.py to state_machine.cpython-310.pyc
+[2.231s] byte-compiling /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm/fsm_node.py to fsm_node.cpython-310.pyc
+[2.232s] running install_data
+[2.233s] creating /home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/config
+[2.233s] copying mission_fsm/config/areas.yaml -> /home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/config
+[2.233s] running install_egg_info
+[2.238s] removing '/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm-0.0.0-py3.10.egg-info' (and everything under it)
+[2.238s] Copying ../build/mission_fsm/mission_fsm.egg-info to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages/mission_fsm-0.0.0-py3.10.egg-info
+[2.241s] running install_scripts
+[2.288s] Installing fsm_node script to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/mission_fsm
+[2.288s] Installing test_signal_pub script to /home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/mission_fsm
+[2.291s] writing list of installed files to '/home/heroes/Workspace/fsm_r2/build/mission_fsm/install.log'
+[2.362s] Invoked command in '/home/heroes/Workspace/fsm_r2/mission_fsm' returned '0': PYTHONPATH=/home/heroes/Workspace/fsm_r2/build/mission_fsm/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/mission_fsm build --build-base /home/heroes/Workspace/fsm_r2/build/mission_fsm/build install --record /home/heroes/Workspace/fsm_r2/build/mission_fsm/install.log --single-version-externally-managed install_data

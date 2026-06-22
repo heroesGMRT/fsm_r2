@@ -1,0 +1,24 @@
+# ============================================================
+#  Area Goal Coordinates
+#  Edit the x, y, yaw values below to change where the robot
+#  navigates in each area.
+#
+#  x   : metres along the map X axis
+#  y   : metres along the map Y axis
+#  yaw : final heading in RADIANS (0 = East, 1.5708 = North)
+# ============================================================
+
+area_1:
+  x: 0.0
+  y: 0.0
+  yaw: 0.0
+
+area_2:
+  x: 0.0
+  y: 0.0
+  yaw: 0.0
+
+area_3:
+  x: 0.0
+  y: 0.0
+  yaw: 0.0
