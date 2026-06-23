@@ -22,6 +22,14 @@ class FSMNode(Node):
         # Flag set to True when the current area is finished
         self.area_complete = False
 
+        # Forest (Area 2) state, set by the dashboard via set_forest_state()
+        self.r1_blocks = []
+        self.r2_blocks = []
+        self.fake_block = 0
+        # One-shot guard so Area2State only sends the start command once
+        # per arrival; reset on START/RESET/RETRY.
+        self.forest_triggered = False
+
         # Subscribe to incoming signals from external nodes
         self.create_subscription(
             String,
@@ -29,6 +37,11 @@ class FSMNode(Node):
             self._signal_callback,
             10
         )
+
+        # Outbound: tells area-specific executor nodes (e.g. the Forest
+        # executor) to start their task. Payload is a JSON string so no
+        # custom .msg is needed; each executor filters on "area".
+        self.area_cmd_pub = self.create_publisher(String, '/fsm/area_command', 10)
 
         self.get_logger().info("FSMNode ready. Listening on /fsm/signal")
 
@@ -52,11 +65,29 @@ class FSMNode(Node):
 
     # ── Trigger methods (called by the dashboard UI) ──────────────────────────
 
+    def set_forest_state(self, r1_blocks, r2_blocks, fake_block):
+        """Called by the dashboard once the operator types in the Forest
+        state for Area 2 (3 R1 KFS blocks, 4 R2 KFS blocks, 1 Fake block).
+
+        Can be called any time before or during Area 2 -- Area2State will
+        pick it up on its next tick and only fires the start command once
+        nav has also arrived.
+        """
+        self.r1_blocks = list(r1_blocks)
+        self.r2_blocks = list(r2_blocks)
+        self.fake_block = int(fake_block)
+        self.forest_triggered = False
+        self.get_logger().info(
+            f"Dashboard → Forest state set: r1={self.r1_blocks} "
+            f"r2={self.r2_blocks} fake={self.fake_block}"
+        )
+
     def trigger_start(self):
         """Begin mission from Area 1."""
         self.get_logger().info("Dashboard → START")
         self.task.current_state = "AREA_1"
         self.area_complete = False
+        self.forest_triggered = False
 
     def trigger_stop(self):
         """Emergency stop: cancel active nav goal and hold current state."""
@@ -69,6 +100,7 @@ class FSMNode(Node):
         self.nav.cancel_goal()
         self.task.current_state = "IDLE"
         self.area_complete = False
+        self.forest_triggered = False
 
     def trigger_retry_area(self, area_id: int):
         """Jump directly to a specific area (1, 2, or 3)."""
@@ -79,6 +111,7 @@ class FSMNode(Node):
         self.get_logger().info(f"Dashboard → RETRY AREA {area_id}")
         self.nav.cancel_goal()
         self.area_complete = False
+        self.forest_triggered = False
         self.task.current_state = key
 
     # ── Main loop ─────────────────────────────────────────────────────────────
