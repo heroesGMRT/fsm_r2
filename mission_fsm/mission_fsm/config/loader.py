@@ -1,24 +1,78 @@
 """Config loader for mission_fsm.
 
-Reads areas.yaml from the same directory and exposes
-per-area goal coordinates as a plain dict:
+NOTE: this file is a clean rebuild, not a patch of your original
+loader.py (which wasn't available when this was written). It was
+reconstructed purely from how it's used elsewhere in the package:
+  - area_1.py / area_2.py / area_3.py do  AREA_GOALS["area_1"]  etc.
+  - the old dashboard did  open(_CONFIG_PATH, ...)
+If your real loader.py does anything else, send it over and this
+should be merged rather than replacing it outright.
 
-    from .config.loader import AREA_GOALS
-
-    goal = AREA_GOALS["area_1"]   # {"x": 0.0, "y": 0.0, "yaw": 0.0}
+areas.yaml now holds multiple named configs (config_1, config_2, ...),
+each with its own area_1/area_2/area_3. AREA_GOALS always reflects
+whichever config is currently active -- the area state modules don't
+need to know configs exist at all; they keep reading
+AREA_GOALS["area_1"] exactly as before.
 """
 
-import os
+from pathlib import Path
+
 import yaml
 
-_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "areas.yaml")
+_CONFIG_PATH = Path(__file__).parent / "areas.yaml"
+_REQUIRED_AREAS = ("area_1", "area_2", "area_3")
 
 
-def _load() -> dict:
+def _load_raw() -> dict:
     with open(_CONFIG_PATH, "r") as f:
-        data = yaml.safe_load(f) or {}
-    return data
+        return yaml.safe_load(f) or {}
 
 
-# Loaded once at import time; restart the node to pick up edits.
-AREA_GOALS: dict = _load()
+def _validate(name: str, goals: dict) -> None:
+    missing = [a for a in _REQUIRED_AREAS if a not in goals]
+    if missing:
+        raise ValueError(f"Config '{name}' is missing areas: {missing}")
+
+
+_raw = _load_raw()
+CONFIGS: dict = _raw.get("configs", {})
+
+if not CONFIGS:
+    raise ValueError(
+        f"No 'configs:' section found in {_CONFIG_PATH}. "
+        f"Expected configs: {{config_1: {{area_1: {{x, y, yaw}}, ...}}, ...}}"
+    )
+for _name, _goals in CONFIGS.items():
+    _validate(_name, _goals)
+
+ACTIVE_CONFIG: str = _raw.get("active_config") or next(iter(CONFIGS))
+if ACTIVE_CONFIG not in CONFIGS:
+    raise ValueError(
+        f"active_config '{ACTIVE_CONFIG}' not found in configs: {list(CONFIGS)}"
+    )
+
+# Public dict read by area_1.py / area_2.py / area_3.py via
+# AREA_GOALS["area_1"], etc. Mutated in place (never rebound) by
+# set_active_config() so any cached reference to this exact dict object
+# stays valid.
+AREA_GOALS: dict = dict(CONFIGS[ACTIVE_CONFIG])
+
+
+def available_configs() -> list:
+    """Names of all configs defined in areas.yaml, in file order."""
+    return list(CONFIGS.keys())
+
+
+def set_active_config(name: str) -> dict:
+    """Switch AREA_GOALS to a different config by name (in-memory only;
+    does not rewrite areas.yaml). Returns the new AREA_GOALS dict.
+
+    Raises KeyError if `name` isn't defined in areas.yaml.
+    """
+    global ACTIVE_CONFIG
+    if name not in CONFIGS:
+        raise KeyError(f"Unknown config '{name}'. Available: {list(CONFIGS)}")
+    ACTIVE_CONFIG = name
+    AREA_GOALS.clear()
+    AREA_GOALS.update(CONFIGS[name])
+    return AREA_GOALS

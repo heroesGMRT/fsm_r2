@@ -144,6 +144,30 @@ class RobotDashboard:
         btn(lp, "EMERGENCY STOP", ACCENT_1, self._on_stop,  h=2)
         btn(lp, "RESET SYSTEM",   ACCENT_2, self._on_reset, h=1)
 
+        # ── Field config switcher ────────────────────────────────────────────
+        sep3 = tk.Frame(lp, bg=GREY, height=1)
+        sep3.pack(fill=tk.X, padx=12, pady=6)
+
+        tk.Label(lp, text="FIELD CONFIG", font=("Arial", 9, "bold"),
+                 bg=BG_PANEL, fg=TEXT_DIM).pack(pady=(2, 4))
+
+        from ..config import loader as _loader
+        self._config_buttons: dict[str, tk.Button] = {}
+        cfg_row = tk.Frame(lp, bg=BG_PANEL)
+        cfg_row.pack(pady=(0, 4))
+        for cfg_name in _loader.available_configs():
+            b = tk.Button(cfg_row, text=cfg_name.replace("_", " ").upper(),
+                          bg=GREY, fg="white", font=self._bold,
+                          width=11, height=1, relief=tk.FLAT, cursor="hand2",
+                          command=lambda n=cfg_name: self._on_set_config(n))
+            b.pack(side=tk.LEFT, padx=3)
+            self._config_buttons[cfg_name] = b
+
+        self.lbl_active_config = tk.Label(lp, text=f"active: {_loader.ACTIVE_CONFIG}",
+                                          font=("Arial", 8), bg=BG_PANEL, fg=TEXT_DIM)
+        self.lbl_active_config.pack(pady=(0, 4))
+        self._highlight_active_config(_loader.ACTIVE_CONFIG)
+
         # ── State badge ───────────────────────────────────────────────────────
         badge_frame = tk.Frame(lp, bg=BG_PANEL)
         badge_frame.pack(side=tk.BOTTOM, pady=20)
@@ -233,6 +257,48 @@ class RobotDashboard:
 
     def _on_reset(self):
         self.fsm.trigger_reset()
+
+    def _on_set_config(self, name: str):
+        """Switch the active field config. Blocked while a mission is
+        actually running, since area_1/2/3's nav goals are cached at
+        Area state level and changing coordinates mid-run would send the
+        robot somewhere unexpected."""
+        current_state = getattr(self.fsm.task, "current_state", "IDLE")
+        if current_state not in ("IDLE", "DONE"):
+            messagebox.showwarning(
+                "Mission in progress",
+                f"FSM is in {current_state}. RESET or wait for DONE before "
+                f"switching field config.",
+            )
+            return
+
+        from ..config import loader as _loader
+        try:
+            _loader.set_active_config(name)
+        except KeyError as e:
+            messagebox.showerror("Invalid config", str(e))
+            return
+
+        self._reload_state_goals()
+        self._highlight_active_config(name)
+        self.lbl_active_config.config(text=f"active: {name}")
+
+    def _highlight_active_config(self, active_name: str):
+        for cfg_name, b in self._config_buttons.items():
+            b.config(bg=GREEN if cfg_name == active_name else GREY)
+
+    def _reload_state_goals(self):
+        """Area state modules cache _GOAL = AREA_GOALS["area_N"] at import
+        time, so after switching configs each module's cached dict needs
+        to be re-pointed at the (possibly new) dict object."""
+        try:
+            from ..task.states import area_1, area_2, area_3
+            from ..config.loader import AREA_GOALS
+            area_1._GOAL = AREA_GOALS.get("area_1", area_1._GOAL)
+            area_2._GOAL = AREA_GOALS.get("area_2", area_2._GOAL)
+            area_3._GOAL = AREA_GOALS.get("area_3", area_3._GOAL)
+        except Exception:
+            pass  # non-fatal; node restart will always pick up changes
 
     def _on_set_forest(self):
         """Validate the typed-in Forest state and push it to FSMNode."""

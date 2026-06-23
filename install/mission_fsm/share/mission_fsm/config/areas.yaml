@@ -1,24 +1,45 @@
 # ============================================================
 #  Area Goal Coordinates
-#  Edit the x, y, yaw values below to change where the robot
-#  navigates in each area.
+#
+#  Two or more named CONFIGS, each with its own area_1/2/3.
+#  Switch which one is active from the dashboard (FIELD CONFIG
+#  buttons), or change `active_config` below to pick the default
+#  used at launch.
 #
 #  x   : metres along the map X axis
 #  y   : metres along the map Y axis
 #  yaw : final heading in RADIANS (0 = East, 1.5708 = North)
 # ============================================================
 
-area_1:
-  x: 0.0
-  y: 0.0
-  yaw: 0.0
+active_config: config_1
 
-area_2:
-  x: 0.0
-  y: 0.0
-  yaw: 0.0
+configs:
+  config_1:
+    area_1:
+      x: 0.109317
+      y: -3.94351
+      yaw: -1.54422
+    area_2:
+      x: 1.54719
+      y: -2.16271
+      yaw: -0.00435559
+    area_3:
+      x: 9.764
+      y: -3.31727
+      yaw: -1.53451
 
-area_3:
-  x: 0.0
-  y: 0.0
-  yaw: 0.0
+  # EDIT ME -- currently a copy of config_1. Fill in your second
+  # starting position / field layout.
+  config_2:
+    area_1:
+      x: 0.109317
+      y: -3.94351
+      yaw: -1.54422
+    area_2:
+      x: 1.54719
+      y: -2.16271
+      yaw: -0.00435559
+    area_3:
+      x: 9.764
+      y: -3.31727
+      yaw: -1.53451

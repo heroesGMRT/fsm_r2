@@ -5,15 +5,10 @@ The dashboard communicates with FSMNode through direct attribute/method
 calls — no ROS topics needed for the UI itself.
 """
 
-import math
 import threading
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import messagebox
-
-import yaml
-
-from ..config.loader import _CONFIG_PATH
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -39,30 +34,34 @@ STATE_COLORS = {
     "DONE":   "#e94560",
 }
 
+# Boundary-only interior blocks R1 KFS may not sit on (rule 3.3.3), and the
+# entrance row the Fake KFS may not sit on (rule 4.1.4) — same rules
+# path.py / forest_planner.py enforce.
+_INTERIOR_BLOCKS = {5, 8}
+_ENTRANCE_ROW = {1, 2, 3}
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _save_yaml(data: dict) -> None:
-    """Write goal data back to areas.yaml (keeps comments stripped by yaml.dump)."""
-    header = (
-        "# ============================================================\n"
-        "#  Area Goal Coordinates  —  edit then press APPLY\n"
-        "#\n"
-        "#  x   : metres along the map X axis\n"
-        "#  y   : metres along the map Y axis\n"
-        "#  yaw : final heading in RADIANS (0=East, 1.5708=North)\n"
-        "# ============================================================\n\n"
-    )
-    with open(_CONFIG_PATH, "w") as f:
-        f.write(header)
-        yaml.dump(data, f, default_flow_style=False, sort_keys=True)
+def _parse_blocks(text: str, count: int) -> list[int]:
+    """Parse a comma/space separated string of block numbers.
 
-
-def _load_yaml() -> dict:
-    with open(_CONFIG_PATH, "r") as f:
-        return yaml.safe_load(f) or {}
+    Raises ValueError with a human-readable message on any problem.
+    """
+    raw = text.replace(",", " ").split()
+    if len(raw) != count:
+        raise ValueError(f"Expected {count} block number(s), got {len(raw)}.")
+    try:
+        blocks = [int(x) for x in raw]
+    except ValueError:
+        raise ValueError("Block numbers must be integers.")
+    if len(set(blocks)) != count:
+        raise ValueError("Block numbers must be distinct.")
+    if any(b < 1 or b > 12 for b in blocks):
+        raise ValueError("Block numbers must be between 1 and 12.")
+    return blocks
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -145,6 +144,30 @@ class RobotDashboard:
         btn(lp, "EMERGENCY STOP", ACCENT_1, self._on_stop,  h=2)
         btn(lp, "RESET SYSTEM",   ACCENT_2, self._on_reset, h=1)
 
+        # ── Field config switcher ────────────────────────────────────────────
+        sep3 = tk.Frame(lp, bg=GREY, height=1)
+        sep3.pack(fill=tk.X, padx=12, pady=6)
+
+        tk.Label(lp, text="FIELD CONFIG", font=("Arial", 9, "bold"),
+                 bg=BG_PANEL, fg=TEXT_DIM).pack(pady=(2, 4))
+
+        from ..config import loader as _loader
+        self._config_buttons: dict[str, tk.Button] = {}
+        cfg_row = tk.Frame(lp, bg=BG_PANEL)
+        cfg_row.pack(pady=(0, 4))
+        for cfg_name in _loader.available_configs():
+            b = tk.Button(cfg_row, text=cfg_name.replace("_", " ").upper(),
+                          bg=GREY, fg="white", font=self._bold,
+                          width=11, height=1, relief=tk.FLAT, cursor="hand2",
+                          command=lambda n=cfg_name: self._on_set_config(n))
+            b.pack(side=tk.LEFT, padx=3)
+            self._config_buttons[cfg_name] = b
+
+        self.lbl_active_config = tk.Label(lp, text=f"active: {_loader.ACTIVE_CONFIG}",
+                                          font=("Arial", 8), bg=BG_PANEL, fg=TEXT_DIM)
+        self.lbl_active_config.pack(pady=(0, 4))
+        self._highlight_active_config(_loader.ACTIVE_CONFIG)
+
         # ── State badge ───────────────────────────────────────────────────────
         badge_frame = tk.Frame(lp, bg=BG_PANEL)
         badge_frame.pack(side=tk.BOTTOM, pady=20)
@@ -156,86 +179,70 @@ class RobotDashboard:
                                   bg=BG_PANEL, fg=GREEN)
         self.lbl_state.pack()
 
-
     def _build_right_panel(self):
         rp = tk.Frame(self.window, bg=BG_DARK)
         rp.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        tk.Label(rp, text="AREA GOAL COORDINATES",
+        tk.Label(rp, text="FOREST STATE — AREA 2",
                  font=self._large, bg=BG_DARK, fg=TEXT_WHITE).pack(pady=(0, 8))
 
-        # ── Coordinate editor cards ───────────────────────────────────────────
-        self._entries: dict[str, dict[str, tk.Entry]] = {}
+        self._build_forest_card(rp)
 
-        areas_cfg = _load_yaml()
-        area_colors = {"area_1": BLUE, "area_2": GREEN, "area_3": ORANGE}
-
-        for area_key, color in area_colors.items():
-            area_data = areas_cfg.get(area_key, {"x": 0.0, "y": 0.0, "yaw": 0.0})
-            self._build_area_card(rp, area_key, area_data, color)
-
-        # ── Apply button ──────────────────────────────────────────────────────
-        apply_row = tk.Frame(rp, bg=BG_DARK)
-        apply_row.pack(fill=tk.X, pady=(12, 0))
-
-        self.lbl_apply_msg = tk.Label(apply_row, text="", font=("Arial", 9),
-                                      bg=BG_DARK, fg=GREEN)
-        self.lbl_apply_msg.pack(side=tk.LEFT, padx=10)
-
-        tk.Button(apply_row, text="APPLY & SAVE COORDINATES",
-                  bg=GREEN, fg=BG_DARK, font=self._bold,
-                  width=28, height=1, relief=tk.FLAT,
-                  cursor="hand2", command=self._on_apply
-                  ).pack(side=tk.RIGHT, padx=10)
-
-    def _build_area_card(self, parent, area_key: str, data: dict, color: str):
-        """Build one coordinate-editor card for an area."""
-        label = area_key.replace("_", " ").upper()
-
-        card = tk.Frame(parent, bg=BG_PANEL, padx=12, pady=8,
-                        highlightbackground=color, highlightthickness=2)
+    def _build_forest_card(self, parent):
+        """Card for typing in the Forest state (R1/R2 KFS + Fake block) and
+        pushing it to FSMNode.set_forest_state(), which Area2State picks up
+        once nav arrives at the Forest entrance."""
+        card = tk.Frame(parent, bg=BG_PANEL, padx=16, pady=14,
+                        highlightbackground=GREEN, highlightthickness=2)
         card.pack(fill=tk.X, pady=4)
 
-        # Title strip
-        title_row = tk.Frame(card, bg=BG_PANEL)
-        title_row.pack(fill=tk.X)
-        tk.Label(title_row, text=f"[ {label} ]", font=self._bold,
-                 bg=BG_PANEL, fg=color).pack(side=tk.LEFT)
+        self._forest_entries: dict[str, tk.StringVar] = {}
 
-
-        # Fields: X  Y  YAW(deg display, stored as rad)
-        fields_row = tk.Frame(card, bg=BG_PANEL)
-        fields_row.pack(fill=tk.X, pady=(6, 0))
-
-        entries = {}
         field_specs = [
-            ("X  (m)", "x"),
-            ("Y  (m)", "y"),
-            ("Yaw (°)", "yaw_deg"),
+            ("r1", "R1 KFS (3 blocks, boundary only — e.g. 1 3 10)", "1 3 10"),
+            ("r2", "R2 KFS (4 blocks — e.g. 5 6 8 11)",              "5 6 8 11"),
+            ("fake", "Fake KFS (1 block, not 1/2/3 — e.g. 9)",       "9"),
         ]
 
-        for lbl_text, key in field_specs:
-            col = tk.Frame(fields_row, bg=BG_PANEL)
-            col.pack(side=tk.LEFT, padx=8)
+        for key, label_text, placeholder in field_specs:
+            row = tk.Frame(card, bg=BG_PANEL)
+            row.pack(fill=tk.X, pady=4)
 
-            tk.Label(col, text=lbl_text, font=("Arial", 8),
-                     bg=BG_PANEL, fg=TEXT_DIM).pack(anchor=tk.W)
+            tk.Label(row, text=label_text, font=("Arial", 9),
+                     bg=BG_PANEL, fg=TEXT_DIM, width=38, anchor=tk.W
+                     ).pack(side=tk.LEFT)
 
-            # Yaw: show in degrees for human readability
-            if key == "yaw_deg":
-                init_val = round(math.degrees(float(data.get("yaw", 0.0))), 2)
-            else:
-                init_val = float(data.get(key, 0.0))
-
-            var = tk.StringVar(value=str(init_val))
-            ent = tk.Entry(col, textvariable=var, width=9,
+            var = tk.StringVar(value="")
+            ent = tk.Entry(row, textvariable=var, width=16,
                            bg=BG_CARD, fg=TEXT_WHITE,
                            insertbackground=TEXT_WHITE,
                            relief=tk.FLAT, font=self._mono)
-            ent.pack()
-            entries[key] = var
+            ent.pack(side=tk.LEFT, padx=8)
+            self._forest_entries[key] = var
 
-        self._entries[area_key] = entries
+        btn_row = tk.Frame(card, bg=BG_PANEL)
+        btn_row.pack(fill=tk.X, pady=(10, 0))
+
+        self.lbl_forest_msg = tk.Label(btn_row, text="", font=("Arial", 9),
+                                       bg=BG_PANEL, fg=GREEN)
+        self.lbl_forest_msg.pack(side=tk.LEFT)
+
+        tk.Button(btn_row, text="SET FOREST STATE",
+                  bg=GREEN, fg=BG_DARK, font=self._bold,
+                  width=20, height=1, relief=tk.FLAT,
+                  cursor="hand2", command=self._on_set_forest
+                  ).pack(side=tk.RIGHT)
+
+        # ── Live readout of whatever FSMNode currently has stored ────────────
+        readout_frame = tk.Frame(parent, bg=BG_DARK)
+        readout_frame.pack(fill=tk.X, pady=(8, 0))
+
+        tk.Label(readout_frame, text="CURRENTLY SET:", font=("Arial", 8),
+                 bg=BG_DARK, fg=TEXT_DIM).pack(anchor=tk.W)
+        self.lbl_forest_current = tk.Label(readout_frame, text="(nothing set yet)",
+                                           font=self._mono, bg=BG_DARK, fg=TEXT_WHITE,
+                                           justify=tk.LEFT, anchor=tk.W)
+        self.lbl_forest_current.pack(anchor=tk.W)
 
     # ── Button callbacks ──────────────────────────────────────────────────────
 
@@ -251,38 +258,39 @@ class RobotDashboard:
     def _on_reset(self):
         self.fsm.trigger_reset()
 
-    def _on_apply(self):
-        """Read entry fields, validate, convert yaw° → rad, write YAML."""
-        new_cfg = {}
-        try:
-            for area_key, fields in self._entries.items():
-                x   = float(fields["x"].get())
-                y   = float(fields["y"].get())
-                yaw_rad = math.radians(float(fields["yaw_deg"].get()))
-                new_cfg[area_key] = {
-                    "x":   round(x, 6),
-                    "y":   round(y, 6),
-                    "yaw": round(yaw_rad, 6),
-                }
-        except ValueError as e:
-            messagebox.showerror("Invalid input", f"Please enter valid numbers.\n\n{e}")
+    def _on_set_config(self, name: str):
+        """Switch the active field config. Blocked while a mission is
+        actually running, since area_1/2/3's nav goals are cached at
+        Area state level and changing coordinates mid-run would send the
+        robot somewhere unexpected."""
+        current_state = getattr(self.fsm.task, "current_state", "IDLE")
+        if current_state not in ("IDLE", "DONE"):
+            messagebox.showwarning(
+                "Mission in progress",
+                f"FSM is in {current_state}. RESET or wait for DONE before "
+                f"switching field config.",
+            )
             return
 
-        _save_yaml(new_cfg)
-        # Push new values into the live loader dict so running states see them
         from ..config import loader as _loader
-        _loader.AREA_GOALS.update(new_cfg)
-        # Also refresh each area state's _GOAL cache
-        self._reload_state_goals()
+        try:
+            _loader.set_active_config(name)
+        except KeyError as e:
+            messagebox.showerror("Invalid config", str(e))
+            return
 
-        self.lbl_apply_msg.config(
-            text="Saved! Restart areas to apply.",
-            fg=GREEN,
-        )
-        self.window.after(4000, lambda: self.lbl_apply_msg.config(text=""))
+        self._reload_state_goals()
+        self._highlight_active_config(name)
+        self.lbl_active_config.config(text=f"active: {name}")
+
+    def _highlight_active_config(self, active_name: str):
+        for cfg_name, b in self._config_buttons.items():
+            b.config(bg=GREEN if cfg_name == active_name else GREY)
 
     def _reload_state_goals(self):
-        """Tell each area state module to reload its _GOAL from AREA_GOALS."""
+        """Area state modules cache _GOAL = AREA_GOALS["area_N"] at import
+        time, so after switching configs each module's cached dict needs
+        to be re-pointed at the (possibly new) dict object."""
         try:
             from ..task.states import area_1, area_2, area_3
             from ..config.loader import AREA_GOALS
@@ -291,6 +299,48 @@ class RobotDashboard:
             area_3._GOAL = AREA_GOALS.get("area_3", area_3._GOAL)
         except Exception:
             pass  # non-fatal; node restart will always pick up changes
+
+    def _on_set_forest(self):
+        """Validate the typed-in Forest state and push it to FSMNode."""
+        try:
+            r1 = _parse_blocks(self._forest_entries["r1"].get(), 3)
+            r2 = _parse_blocks(self._forest_entries["r2"].get(), 4)
+            fake = _parse_blocks(self._forest_entries["fake"].get(), 1)[0]
+        except ValueError as e:
+            messagebox.showerror("Invalid Forest state", str(e))
+            return
+
+        bad_interior = sorted(set(r1) & _INTERIOR_BLOCKS)
+        if bad_interior:
+            messagebox.showerror(
+                "Invalid Forest state",
+                f"R1 KFS must be on boundary blocks (rule 3.3.3); "
+                f"{bad_interior} are interior and not allowed.",
+            )
+            return
+
+        if fake in _ENTRANCE_ROW:
+            messagebox.showerror(
+                "Invalid Forest state",
+                "Fake KFS cannot be on entrance blocks 1, 2, or 3 (rule 4.1.4).",
+            )
+            return
+
+        all_blocks = r1 + r2 + [fake]
+        if len(set(all_blocks)) != len(all_blocks):
+            messagebox.showerror(
+                "Invalid Forest state",
+                "R1, R2, and Fake blocks must all be distinct from each other.",
+            )
+            return
+
+        self.fsm.set_forest_state(r1, r2, fake)
+
+        self.lbl_forest_msg.config(
+            text=f"Set! R1={r1}  R2={r2}  Fake={fake}",
+            fg=GREEN,
+        )
+        self.window.after(4000, lambda: self.lbl_forest_msg.config(text=""))
 
     # ── Periodic refresh ──────────────────────────────────────────────────────
 
@@ -302,6 +352,15 @@ class RobotDashboard:
         state = getattr(self.fsm.task, "current_state", "—")
         color = STATE_COLORS.get(state, TEXT_WHITE)
         self.lbl_state.config(text=state, fg=color)
+
+        # Update Forest-state readout from whatever's actually stored on FSMNode
+        r1 = getattr(self.fsm, "r1_blocks", [])
+        r2 = getattr(self.fsm, "r2_blocks", [])
+        fake = getattr(self.fsm, "fake_block", 0)
+        if r1 or r2 or fake:
+            self.lbl_forest_current.config(text=f"R1={r1}  R2={r2}  Fake={fake}")
+        else:
+            self.lbl_forest_current.config(text="(nothing set yet)")
 
         # Update clock
         import datetime
@@ -367,4 +426,3 @@ def launch_dashboard(fsm_node) -> threading.Thread:
     t = threading.Thread(target=_run, name="dashboard-ui", daemon=True)
     t.start()
     return t
-
