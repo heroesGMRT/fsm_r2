@@ -1,0 +1,117 @@
+[0.354s] DEBUG:colcon:Command line arguments: ['/usr/bin/colcon', 'build']
+[0.354s] DEBUG:colcon:Parsed command line arguments: Namespace(log_base=None, log_level=None, verb_name='build', build_base='build', install_base='install', merge_install=False, symlink_install=False, test_result_base=None, continue_on_error=False, executor='parallel', parallel_workers=6, event_handlers=None, ignore_user_meta=False, metas=['./colcon.meta'], base_paths=['.'], packages_ignore=None, packages_ignore_regex=None, paths=None, packages_up_to=None, packages_up_to_regex=None, packages_above=None, packages_above_and_dependencies=None, packages_above_depth=None, packages_select_by_dep=None, packages_skip_by_dep=None, packages_skip_up_to=None, packages_select_build_failed=False, packages_skip_build_finished=False, packages_select_test_failures=False, packages_skip_test_passed=False, packages_select=None, packages_skip=None, packages_select_regex=None, packages_skip_regex=None, packages_start=None, packages_end=None, allow_overriding=[], cmake_args=None, cmake_target=None, cmake_target_skip_unavailable=False, cmake_clean_cache=False, cmake_clean_first=False, cmake_force_configure=False, ament_cmake_args=None, catkin_cmake_args=None, catkin_skip_building_tests=False, mixin_files=None, mixin=None, verb_parser=<colcon_mixin.mixin.mixin_argument.MixinArgumentDecorator object at 0xffffb6c5a6b0>, verb_extension=<colcon_core.verb.build.BuildVerb object at 0xffffb6e374c0>, main=<bound method BuildVerb.main of <colcon_core.verb.build.BuildVerb object at 0xffffb6e374c0>>, mixin_verb=('build',))
+[0.920s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) check parameters
+[0.921s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) check parameters
+[0.921s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) check parameters
+[0.921s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) check parameters
+[0.921s] Level 1:colcon.colcon_core.package_discovery:discover_packages(colcon_meta) discover
+[0.921s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) discover
+[0.921s] INFO:colcon.colcon_core.package_discovery:Crawling recursively for packages in '/home/heroes/Workspace/fsm_r2'
+[0.921s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ignore', 'ignore_ament_install']
+[0.922s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore'
+[0.922s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ignore_ament_install'
+[0.922s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_pkg']
+[0.922s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_pkg'
+[0.922s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['colcon_meta']
+[0.922s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'colcon_meta'
+[0.922s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['ros']
+[0.922s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'ros'
+[0.950s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['cmake', 'python']
+[0.950s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'cmake'
+[0.950s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'python'
+[0.950s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extensions ['python_setup_py']
+[0.950s] Level 1:colcon.colcon_core.package_identification:_identify(.) by extension 'python_setup_py'
+[0.951s] Level 1:colcon.colcon_core.package_identification:_identify(build) by extensions ['ignore', 'ignore_ament_install']
+[0.951s] Level 1:colcon.colcon_core.package_identification:_identify(build) by extension 'ignore'
+[0.951s] Level 1:colcon.colcon_core.package_identification:_identify(build) ignored
+[0.951s] Level 1:colcon.colcon_core.package_identification:_identify(install) by extensions ['ignore', 'ignore_ament_install']
+[0.952s] Level 1:colcon.colcon_core.package_identification:_identify(install) by extension 'ignore'
+[0.952s] Level 1:colcon.colcon_core.package_identification:_identify(install) ignored
+[0.952s] Level 1:colcon.colcon_core.package_identification:_identify(log) by extensions ['ignore', 'ignore_ament_install']
+[0.952s] Level 1:colcon.colcon_core.package_identification:_identify(log) by extension 'ignore'
+[0.952s] Level 1:colcon.colcon_core.package_identification:_identify(log) ignored
+[0.953s] Level 1:colcon.colcon_core.package_identification:_identify(mission_fsm) by extensions ['ignore', 'ignore_ament_install']
+[0.953s] Level 1:colcon.colcon_core.package_identification:_identify(mission_fsm) by extension 'ignore'
+[0.953s] Level 1:colcon.colcon_core.package_identification:_identify(mission_fsm) by extension 'ignore_ament_install'
+[0.953s] Level 1:colcon.colcon_core.package_identification:_identify(mission_fsm) by extensions ['colcon_pkg']
+[0.953s] Level 1:colcon.colcon_core.package_identification:_identify(mission_fsm) by extension 'colcon_pkg'
+[0.953s] Level 1:colcon.colcon_core.package_identification:_identify(mission_fsm) by extensions ['colcon_meta']
+[0.953s] Level 1:colcon.colcon_core.package_identification:_identify(mission_fsm) by extension 'colcon_meta'
+[0.954s] Level 1:colcon.colcon_core.package_identification:_identify(mission_fsm) by extensions ['ros']
+[0.954s] Level 1:colcon.colcon_core.package_identification:_identify(mission_fsm) by extension 'ros'
+[0.961s] DEBUG:colcon.colcon_core.package_identification:Package 'mission_fsm' with type 'ros.ament_python' and name 'mission_fsm'
+[0.961s] Level 1:colcon.colcon_core.package_discovery:discover_packages(recursive) using defaults
+[0.961s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) discover
+[0.961s] Level 1:colcon.colcon_core.package_discovery:discover_packages(ignore) using defaults
+[0.961s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) discover
+[0.961s] Level 1:colcon.colcon_core.package_discovery:discover_packages(path) using defaults
+[1.057s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) check parameters
+[1.057s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) discover
+[1.061s] WARNING:colcon.colcon_core.prefix_path.colcon:The path '/home/heroes/Workspace/new_spearhead/install' in the environment variable COLCON_PREFIX_PATH doesn't exist
+[1.061s] WARNING:colcon.colcon_ros.prefix_path.ament:The path '/home/heroes/Workspace/new_spearhead/install/spearhead_vision' in the environment variable AMENT_PREFIX_PATH doesn't exist
+[1.068s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 1 installed packages in /home/heroes/Workspace/spearhead/install
+[1.071s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 39 installed packages in /home/heroes/microros_ws/install
+[1.073s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 1 installed packages in /home/heroes/Workspace/fsm_r2/install
+[1.076s] DEBUG:colcon.colcon_installed_package_information.package_discovery:Found 338 installed packages in /opt/ros/humble
+[1.081s] Level 1:colcon.colcon_core.package_discovery:discover_packages(prefix_path) using defaults
+[1.209s] Level 5:colcon.colcon_core.verb:set package 'mission_fsm' build argument 'cmake_args' from command line to 'None'
+[1.209s] Level 5:colcon.colcon_core.verb:set package 'mission_fsm' build argument 'cmake_target' from command line to 'None'
+[1.209s] Level 5:colcon.colcon_core.verb:set package 'mission_fsm' build argument 'cmake_target_skip_unavailable' from command line to 'False'
+[1.210s] Level 5:colcon.colcon_core.verb:set package 'mission_fsm' build argument 'cmake_clean_cache' from command line to 'False'
+[1.210s] Level 5:colcon.colcon_core.verb:set package 'mission_fsm' build argument 'cmake_clean_first' from command line to 'False'
+[1.210s] Level 5:colcon.colcon_core.verb:set package 'mission_fsm' build argument 'cmake_force_configure' from command line to 'False'
+[1.210s] Level 5:colcon.colcon_core.verb:set package 'mission_fsm' build argument 'ament_cmake_args' from command line to 'None'
+[1.210s] Level 5:colcon.colcon_core.verb:set package 'mission_fsm' build argument 'catkin_cmake_args' from command line to 'None'
+[1.210s] Level 5:colcon.colcon_core.verb:set package 'mission_fsm' build argument 'catkin_skip_building_tests' from command line to 'False'
+[1.210s] DEBUG:colcon.colcon_core.verb:Building package 'mission_fsm' with the following arguments: {'ament_cmake_args': None, 'build_base': '/home/heroes/Workspace/fsm_r2/build/mission_fsm', 'catkin_cmake_args': None, 'catkin_skip_building_tests': False, 'cmake_args': None, 'cmake_clean_cache': False, 'cmake_clean_first': False, 'cmake_force_configure': False, 'cmake_target': None, 'cmake_target_skip_unavailable': False, 'install_base': '/home/heroes/Workspace/fsm_r2/install/mission_fsm', 'merge_install': False, 'path': '/home/heroes/Workspace/fsm_r2/mission_fsm', 'symlink_install': False, 'test_result_base': None}
+[1.210s] INFO:colcon.colcon_core.executor:Executing jobs using 'parallel' executor
+[1.213s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete
+[1.214s] INFO:colcon.colcon_ros.task.ament_python.build:Building ROS package in '/home/heroes/Workspace/fsm_r2/mission_fsm' with build type 'ament_python'
+[1.214s] Level 1:colcon.colcon_core.shell:create_environment_hook('mission_fsm', 'ament_prefix_path')
+[1.223s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_core.shell.bat': Not used on non-Windows systems
+[1.223s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/hook/ament_prefix_path.ps1'
+[1.225s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/hook/ament_prefix_path.dsv'
+[1.227s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/hook/ament_prefix_path.sh'
+[1.229s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[1.229s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[1.965s] INFO:colcon.colcon_core.task.python.build:Building Python package in '/home/heroes/Workspace/fsm_r2/mission_fsm'
+[1.966s] INFO:colcon.colcon_core.shell:Skip shell extension 'powershell' for command environment: Not usable outside of PowerShell
+[1.966s] DEBUG:colcon.colcon_core.shell:Skip shell extension 'dsv' for command environment
+[2.927s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoking command in '/home/heroes/Workspace/fsm_r2/mission_fsm': PYTHONPATH=/home/heroes/Workspace/fsm_r2/build/mission_fsm/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/mission_fsm build --build-base /home/heroes/Workspace/fsm_r2/build/mission_fsm/build install --record /home/heroes/Workspace/fsm_r2/build/mission_fsm/install.log --single-version-externally-managed install_data
+[3.744s] DEBUG:colcon.colcon_core.event_handler.log_command:Invoked command in '/home/heroes/Workspace/fsm_r2/mission_fsm' returned '0': PYTHONPATH=/home/heroes/Workspace/fsm_r2/build/mission_fsm/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base ../build/mission_fsm build --build-base /home/heroes/Workspace/fsm_r2/build/mission_fsm/build install --record /home/heroes/Workspace/fsm_r2/build/mission_fsm/install.log --single-version-externally-managed install_data
+[3.763s] Level 1:colcon.colcon_core.environment:checking '/home/heroes/Workspace/fsm_r2/install/mission_fsm' for CMake module files
+[3.765s] Level 1:colcon.colcon_core.environment:checking '/home/heroes/Workspace/fsm_r2/install/mission_fsm' for CMake config files
+[3.768s] Level 1:colcon.colcon_core.environment:checking '/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib'
+[3.769s] Level 1:colcon.colcon_core.environment:checking '/home/heroes/Workspace/fsm_r2/install/mission_fsm/bin'
+[3.769s] Level 1:colcon.colcon_core.environment:checking '/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/pkgconfig/mission_fsm.pc'
+[3.770s] Level 1:colcon.colcon_core.environment:checking '/home/heroes/Workspace/fsm_r2/install/mission_fsm/lib/python3.10/site-packages'
+[3.770s] Level 1:colcon.colcon_core.shell:create_environment_hook('mission_fsm', 'pythonpath')
+[3.771s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/hook/pythonpath.ps1'
+[3.773s] INFO:colcon.colcon_core.shell:Creating environment descriptor '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/hook/pythonpath.dsv'
+[3.775s] INFO:colcon.colcon_core.shell:Creating environment hook '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/hook/pythonpath.sh'
+[3.777s] Level 1:colcon.colcon_core.environment:checking '/home/heroes/Workspace/fsm_r2/install/mission_fsm/bin'
+[3.778s] Level 1:colcon.colcon_core.environment:create_environment_scripts_only(mission_fsm)
+[3.779s] INFO:colcon.colcon_core.shell:Creating package script '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/package.ps1'
+[3.784s] INFO:colcon.colcon_core.shell:Creating package descriptor '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/package.dsv'
+[3.787s] INFO:colcon.colcon_core.shell:Creating package script '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/package.sh'
+[3.790s] INFO:colcon.colcon_core.shell:Creating package script '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/package.bash'
+[3.794s] INFO:colcon.colcon_core.shell:Creating package script '/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/mission_fsm/package.zsh'
+[3.797s] Level 1:colcon.colcon_core.environment:create_file_with_runtime_dependencies(/home/heroes/Workspace/fsm_r2/install/mission_fsm/share/colcon-core/packages/mission_fsm)
+[3.799s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:closing loop
+[3.801s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:loop closed
+[3.801s] DEBUG:colcon.colcon_parallel_executor.executor.parallel:run_until_complete finished with '0'
+[3.802s] DEBUG:colcon.colcon_core.event_reactor:joining thread
+[3.830s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.terminal_notifier': Not used on non-Darwin systems
+[3.830s] INFO:colcon.colcon_core.plugin_system:Skipping extension 'colcon_notification.desktop_notification.win32': Not used on non-Windows systems
+[3.830s] INFO:colcon.colcon_notification.desktop_notification:Sending desktop notification using 'notify2'
+[3.873s] DEBUG:colcon.colcon_core.event_reactor:joined thread
+[3.875s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/heroes/Workspace/fsm_r2/install/local_setup.ps1'
+[3.879s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/heroes/Workspace/fsm_r2/install/_local_setup_util_ps1.py'
+[3.886s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/heroes/Workspace/fsm_r2/install/setup.ps1'
+[3.898s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/heroes/Workspace/fsm_r2/install/local_setup.sh'
+[3.901s] INFO:colcon.colcon_core.shell:Creating prefix util module '/home/heroes/Workspace/fsm_r2/install/_local_setup_util_sh.py'
+[3.904s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/heroes/Workspace/fsm_r2/install/setup.sh'
+[3.916s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/heroes/Workspace/fsm_r2/install/local_setup.bash'
+[3.919s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/heroes/Workspace/fsm_r2/install/setup.bash'
+[3.930s] INFO:colcon.colcon_core.shell:Creating prefix script '/home/heroes/Workspace/fsm_r2/install/local_setup.zsh'
+[3.932s] INFO:colcon.colcon_core.shell:Creating prefix chain script '/home/heroes/Workspace/fsm_r2/install/setup.zsh'

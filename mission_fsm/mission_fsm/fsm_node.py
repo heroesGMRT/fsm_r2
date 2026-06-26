@@ -26,8 +26,9 @@ class FSMNode(Node):
         self.r1_blocks = []
         self.r2_blocks = []
         self.fake_block = 0
-        # One-shot guard so Area2State only sends the start command once
-        # per arrival; reset on START/RESET/RETRY.
+        # One-shot guards so Area1State/Area2State only send their start
+        # command once per arrival; reset on START/RESET/RETRY.
+        self.align_triggered = False
         self.forest_triggered = False
 
         # Subscribe to incoming signals from external nodes
@@ -87,6 +88,7 @@ class FSMNode(Node):
         self.get_logger().info("Dashboard → START")
         self.task.current_state = "AREA_1"
         self.area_complete = False
+        self.align_triggered = False
         self.forest_triggered = False
 
     def trigger_stop(self):
@@ -100,6 +102,7 @@ class FSMNode(Node):
         self.nav.cancel_goal()
         self.task.current_state = "IDLE"
         self.area_complete = False
+        self.align_triggered = False
         self.forest_triggered = False
 
     def trigger_retry_area(self, area_id: int):
@@ -111,6 +114,7 @@ class FSMNode(Node):
         self.get_logger().info(f"Dashboard → RETRY AREA {area_id}")
         self.nav.cancel_goal()
         self.area_complete = False
+        self.align_triggered = False
         self.forest_triggered = False
         self.task.current_state = key
 
