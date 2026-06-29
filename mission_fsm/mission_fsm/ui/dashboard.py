@@ -156,6 +156,14 @@ class RobotDashboard:
                                   bg=BG_PANEL, fg=GREEN)
         self.lbl_state.pack()
 
+        # Retry / recovery status
+        tk.Label(badge_frame, text="RETRY STATUS", font=("Arial", 8),
+                 bg=BG_PANEL, fg=TEXT_DIM).pack(pady=(10, 0))
+        self.lbl_retry = tk.Label(badge_frame, text="—",
+                                  font=("Arial", 10, "bold"),
+                                  bg=BG_PANEL, fg=ORANGE)
+        self.lbl_retry.pack()
+
 
     def _build_right_panel(self):
         rp = tk.Frame(self.window, bg=BG_DARK)
@@ -302,6 +310,13 @@ class RobotDashboard:
         state = getattr(self.fsm.task, "current_state", "—")
         color = STATE_COLORS.get(state, TEXT_WHITE)
         self.lbl_state.config(text=state, fg=color)
+
+        # Update retry status
+        retry = getattr(self.fsm, "retry_status", "")
+        if retry:
+            self.lbl_retry.config(text=retry, fg=ORANGE)
+        else:
+            self.lbl_retry.config(text="—", fg=TEXT_DIM)
 
         # Update clock
         import datetime

@@ -3,9 +3,10 @@
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
+from geometry_msgs.msg import Twist
 
 from .interfaces.nav_interface import NavInterface
-from .task.task_manager import TaskManager
+from .task.custom_task_manager import CustomTaskManager as TaskManager
 
 
 class FSMNode(Node):
@@ -21,6 +22,10 @@ class FSMNode(Node):
 
         # Flag set to True when the current area is finished
         self.area_complete = False
+
+        # Retry / failure flags (used by RetryState & cmd_vel verify_attr)
+        self.retry_status = ""          # shown on dashboard UI
+        self.step_failed = False        # set by external verifier nodes
 
         # Forest (Area 2) state, set by the dashboard via set_forest_state()
         self.r1_blocks = []
@@ -42,6 +47,9 @@ class FSMNode(Node):
         # executor) to start their task. Payload is a JSON string so no
         # custom .msg is needed; each executor filters on "area".
         self.area_cmd_pub = self.create_publisher(String, '/fsm/area_command', 10)
+
+        # CmdVel publisher for direct robot control
+        self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
         self.get_logger().info("FSMNode ready. Listening on /fsm/signal")
 
@@ -98,6 +106,8 @@ class FSMNode(Node):
         """Reset FSM back to IDLE and clear all flags."""
         self.get_logger().info("Dashboard → RESET")
         self.nav.cancel_goal()
+        if hasattr(self.task, 'reset'):
+            self.task.reset()
         self.task.current_state = "IDLE"
         self.area_complete = False
         self.forest_triggered = False
@@ -113,6 +123,27 @@ class FSMNode(Node):
         self.area_complete = False
         self.forest_triggered = False
         self.task.current_state = key
+
+    # ── CmdVel helpers ──────────────────────────────────────────────────────
+
+    def publish_cmd_vel(self, linear_x: float = 0.0, angular_z: float = 0.0):
+        """Publish a Twist message to /cmd_vel.
+
+        Args:
+            linear_x: Forward/backward speed (m/s). Positive = forward.
+            angular_z: Rotational speed (rad/s). Positive = counter-clockwise.
+        """
+        twist = Twist()
+        twist.linear.x = float(linear_x)
+        twist.angular.z = float(angular_z)
+        self.cmd_vel_pub.publish(twist)
+        self.get_logger().info(
+            f"CMD_VEL → linear_x={linear_x:.3f} angular_z={angular_z:.3f}"
+        )
+
+    def stop_cmd_vel(self):
+        """Publish zero velocity to immediately stop the robot."""
+        self.publish_cmd_vel(0.0, 0.0)
 
     # ── Main loop ─────────────────────────────────────────────────────────────
 
