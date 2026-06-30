@@ -78,7 +78,7 @@ class RobotDashboard:
         self._stop   = threading.Event()
 
         window.title("KRAI 2026 — MASTER CONTROL DASHBOARD")
-        window.geometry("900x520")
+        window.geometry("900x640")
         window.resizable(False, False)
         window.configure(bg=BG_DARK)
 
@@ -244,6 +244,29 @@ class RobotDashboard:
                                            justify=tk.LEFT, anchor=tk.W)
         self.lbl_forest_current.pack(anchor=tk.W)
 
+        self._build_area2_status(parent)
+
+    def _build_area2_status(self, parent):
+        status_card = tk.Frame(parent, bg=BG_PANEL, padx=16, pady=12,
+                               highlightbackground=GREY, highlightthickness=1)
+        status_card.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
+
+        tk.Label(status_card, text="AREA 2 EXECUTOR STATUS",
+                 font=("Arial", 10, "bold"), bg=BG_PANEL,
+                 fg=TEXT_WHITE).pack(anchor=tk.W)
+
+        self.lbl_area2_status = tk.Label(
+            status_card,
+            text="Waiting for Forest executor status...",
+            font=self._mono,
+            bg=BG_PANEL,
+            fg=TEXT_DIM,
+            justify=tk.LEFT,
+            anchor=tk.NW,
+            wraplength=560,
+        )
+        self.lbl_area2_status.pack(fill=tk.BOTH, expand=True, anchor=tk.W, pady=(8, 0))
+
     # ── Button callbacks ──────────────────────────────────────────────────────
 
     def _on_start(self):
@@ -362,6 +385,8 @@ class RobotDashboard:
         else:
             self.lbl_forest_current.config(text="(nothing set yet)")
 
+        self._refresh_area2_status()
+
         # Update clock
         import datetime
         now = datetime.datetime.now().strftime("%H:%M:%S")
@@ -371,6 +396,54 @@ class RobotDashboard:
 
     def stop(self):
         self._stop.set()
+
+    def _refresh_area2_status(self):
+        payload = getattr(self.fsm, "area_status", {}).get("AREA_2")
+        if not payload:
+            self.lbl_area2_status.config(
+                text="Waiting for Forest executor status...",
+                fg=TEXT_DIM,
+            )
+            return
+
+        status = payload.get("status", "unknown")
+        detail = payload.get("detail", "")
+        color = {
+            "planned": BLUE,
+            "complete": GREEN,
+            "error": ACCENT_1,
+            "impossible": ACCENT_1,
+        }.get(status, TEXT_WHITE)
+
+        self.lbl_area2_status.config(
+            text=self._format_area2_status(status, detail),
+            fg=color,
+        )
+
+    @staticmethod
+    def _format_area2_status(status: str, detail) -> str:
+        if isinstance(detail, dict):
+            lines = [
+                f"Status       : {status}",
+                f"Plan status  : {detail.get('status', '-')}",
+                f"Clear R1     : {detail.get('clear_set', [])}",
+                f"R2 collects  : {detail.get('r2_collected', [])}",
+                f"Exit block   : {detail.get('exit_block', '-')}",
+                f"Foot path    : {detail.get('positions', [])}",
+                f"Actions      : {detail.get('action_count', '-')}",
+            ]
+            if detail.get("fallback_collect"):
+                lines.append(f"Fallback     : collecting {detail.get('want_used')} block(s)")
+            if detail.get("needs_extra_r1_trip"):
+                lines.append("R1 warning   : extra R1 trip required")
+            return "\n".join(lines)
+
+        if isinstance(detail, (list, tuple)):
+            rendered = ", ".join(str(item) for item in detail)
+        else:
+            rendered = str(detail)
+
+        return f"Status       : {status}\nDetail       : {rendered}"
 
 
 # ──────────────────────────────────────────────────────────────────────────────

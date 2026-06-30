@@ -57,6 +57,14 @@ class Area1State(BaseState):
         node.get_logger().info("Area 1: sent visual-servo start command.")
         node.align_triggered = True
 
+    def execute(self, node):
+        node.get_logger().info(
+            f"Area 1 → Mundur  "
+            f"x={_GOAL['x']}, y={_GOAL['y']}, yaw={_GOAL['yaw']}",
+            once=True,
+        )
+        node.nav.send_goal([0.3, -3.94351, -1.54422])
+
     def check_transition(self, node):
         if node.area_complete:
             node.area_complete = False
