@@ -7,7 +7,7 @@ from std_msgs.msg import String
 from .interfaces.nav_interface import NavInterface
 from .task.task_manager import TaskManager
 
-
+##aasadasd
 class FSMNode(Node):
 
     def __init__(self):
