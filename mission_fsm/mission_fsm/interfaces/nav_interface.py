@@ -31,6 +31,7 @@ class NavInterface:
         self.current_feedback = None
         self.result = None
         self.active_goal = None
+        self.completed_goal = None
 
     def navigate(self, destination):
         """Send navigation command to the robot.
@@ -121,6 +122,11 @@ class NavInterface:
         # Prevent sending duplicate goal if the same target is currently in-progress
         if self.active_goal == target_coords and self.is_active():
             return True
+        if (
+            self.completed_goal == target_coords
+            and self.status == GoalStatus.STATUS_SUCCEEDED
+        ):
+            return True
 
         self.logger.info(
             f"Sending NavigateToPose goal: x={goal_msg.pose.pose.position.x:.2f}, "
@@ -131,6 +137,7 @@ class NavInterface:
         self.status = GoalStatus.STATUS_UNKNOWN
         self.current_feedback = None
         self.result = None
+        self.completed_goal = None
 
         self._send_goal_future = self._action_client.send_goal_async(
             goal_msg,
@@ -160,6 +167,8 @@ class NavInterface:
         result_response = future.result()
         self.status = result_response.status
         self.result = result_response.result
+        if self.status == GoalStatus.STATUS_SUCCEEDED:
+            self.completed_goal = self.active_goal
         self.active_goal = None
         
         if self.status == GoalStatus.STATUS_SUCCEEDED:
@@ -174,6 +183,8 @@ class NavInterface:
         if self._goal_handle is not None:
             self.logger.info("Canceling active navigation goal...")
             self._goal_handle.cancel_goal_async()
+            self.active_goal = None
+            self.completed_goal = None
             return True
         return False
 
@@ -196,4 +207,3 @@ class NavInterface:
             GoalStatus.STATUS_ACCEPTED,
             GoalStatus.STATUS_EXECUTING
         ]
-

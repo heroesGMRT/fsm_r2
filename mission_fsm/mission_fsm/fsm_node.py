@@ -1,5 +1,7 @@
 """FSM node for mission_fsm."""
 
+import json
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -26,6 +28,7 @@ class FSMNode(Node):
         self.r1_blocks = []
         self.r2_blocks = []
         self.fake_block = 0
+        self.area_status = {}
         # One-shot guards so Area1State/Area2State only send their start
         # command once per arrival; reset on START/RESET/RETRY.
         self.align_triggered = False
@@ -36,6 +39,12 @@ class FSMNode(Node):
             String,
             '/fsm/signal',
             self._signal_callback,
+            10
+        )
+        self.create_subscription(
+            String,
+            '/fsm/area_status',
+            self._area_status_callback,
             10
         )
 
@@ -63,6 +72,17 @@ class FSMNode(Node):
             self.area_complete = True
         else:
             self.get_logger().warn(f"Unknown signal received: '{signal}'")
+
+    def _area_status_callback(self, msg: String):
+        """Store the latest area-executor status for dashboard display."""
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError as exc:
+            self.get_logger().warn(f"Ignoring invalid area status JSON: {exc}")
+            return
+
+        area = payload.get("area", "UNKNOWN")
+        self.area_status[area] = payload
 
     # ── Trigger methods (called by the dashboard UI) ──────────────────────────
 

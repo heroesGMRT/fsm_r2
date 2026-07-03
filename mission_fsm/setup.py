@@ -32,6 +32,8 @@ setup(
             'fsm_node = mission_fsm.fsm_node:main',
             'test_signal_pub = mission_fsm.test_signal_pub:main',
             'mock_nav_server = mission_fsm.mock_nav_server:main',
+            'forest_executor = mission_fsm.forest_executor_node:main',
+            'teensy_command = mission_fsm.teensy_command_node:main',
         ],
     },
 )
