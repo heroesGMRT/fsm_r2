@@ -16,9 +16,9 @@ active_config: config_1
 configs:
   config_1:
     area_1:
-      x: 0.109317
-      y: -3.94351
-      yaw: 1.54422
+      x: 0.38
+      y: 0.42
+      yaw: -1.54422
     area_2:
       x: 1.54719
       y: -2.16271
