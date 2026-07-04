@@ -1,7 +1,17 @@
 """Placeholder Teensy command bridge.
 
-Later this node should translate high-level command names into the real serial
-protocol for the Teensy. For now it only logs the command it would send.
+Later this node should translate high-level command names into the real
+serial / micro-ROS protocol for the Teensy. For now it logs the command and
+IMMEDIATELY acks it on /teensy/ack, so the forest executor's sequencer can
+be dry-run end-to-end without hardware.
+
+Ack contract the real bridge MUST honour: after a command from
+/teensy/command has PHYSICALLY COMPLETED (not merely been sent), publish on
+/teensy/ack::
+
+    {"sequence": <sequence from the command>, "status": "done"}
+
+or ``"status": "error"`` if the motion failed.
 """
 
 import json
@@ -22,8 +32,10 @@ class TeensyCommandNode(Node):
             self._command_callback,
             10,
         )
+        self._ack_pub = self.create_publisher(String, "/teensy/ack", 10)
         self.get_logger().info(
-            "TeensyCommand placeholder ready. Listening on /teensy/command"
+            "TeensyCommand placeholder ready. Listening on /teensy/command; "
+            "acking instantly on /teensy/ack"
         )
 
     def _command_callback(self, msg: String):
@@ -41,6 +53,12 @@ class TeensyCommandNode(Node):
             f"[PLACEHOLDER] Teensy command {sequence}/{total}: {command}"
             f"{(' - ' + comment) if comment else ''}"
         )
+
+        # Instant ack — the real bridge must ack only on motion completion.
+        if isinstance(sequence, int):
+            ack = String()
+            ack.data = json.dumps({"sequence": sequence, "status": "done"})
+            self._ack_pub.publish(ack)
 
 
 def main(args=None):

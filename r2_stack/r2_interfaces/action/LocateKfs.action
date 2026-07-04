@@ -1,0 +1,27 @@
+# Ask the KFS localizer for one settled, multi-frame-averaged centroid
+# measurement of the KFS cube in front of the camera.
+#
+# The localizer waits for the IMU to settle, collects `centroid_avg_frames`
+# valid depth frames, clusters, and returns the averaged centroid in
+# the camera color optical frame. It also publishes the same point on
+# /r2_perception/kfs_centroid.
+
+# Block height enum values (block_height field)
+uint8 HEIGHT_A=0   # 200 mm
+uint8 HEIGHT_B=1   # 400 mm
+uint8 HEIGHT_C=2   # 600 mm
+
+# Goal
+int32 block_id
+uint8 block_height
+---
+# Result
+bool success
+geometry_msgs/PointStamped centroid
+uint32 points_used        # points in the winning cluster (last frame)
+float32 spread_mm         # max deviation of per-frame centroids from the mean
+string message
+---
+# Feedback
+uint32 frames_collected
+string state              # WAITING_FOR_SETTLE | COLLECTING | ...

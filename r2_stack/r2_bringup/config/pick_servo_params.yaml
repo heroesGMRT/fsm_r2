@@ -1,0 +1,25 @@
+pick_servo:
+  ros__parameters:
+    gripper_frame: gripper_link
+    base_frame: base_link
+    global_frame: map
+
+    align_tolerance_mm: 10.0
+    re_measure_threshold_mm: 15.0
+    max_strafe_attempts: 2
+    max_strafe_m: 0.30
+
+    # 'nav2' (primary): short relative NavigateToPose goal.
+    # 'cmd_vel' (fallback): open-loop timed Twist to the Teensy bridge.
+    strafe_backend: nav2
+    cmd_vel_topic: /cmd_vel
+    strafe_speed_m_s: 0.05
+
+    locate_action: locate_kfs
+    nav2_action: navigate_to_pose
+    server_wait_s: 5.0
+    measure_timeout_s: 30.0
+    nav_timeout_s: 20.0
+    tf_timeout_s: 1.0
+
+    enable_pick_command: false
