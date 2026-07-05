@@ -1,0 +1,34 @@
+kfs_localizer:
+  ros__parameters:
+    depth_topic: /camera/aligned_depth_to_color/image_raw
+    camera_info_topic: /camera/color/camera_info
+    imu_topic: /camera/imu
+
+    # D435i hard limits: min reliable depth 0.28 m -> 0.30 m floor with margin
+    min_depth_m: 0.30
+    max_depth_m: 1.20
+
+    centroid_avg_frames: 15
+    imu_settle_threshold_rad_s: 0.05
+    imu_settle_window_s: 0.5
+    settle_timeout_s: 10.0
+    measure_timeout_s: 15.0
+
+    cluster_tolerance_m: 0.05
+    cluster_min_points: 50
+    cluster_max_points: 5000
+    # Visible face extents accepted as "a 350 mm cube": partial faces down
+    # to 150 mm are allowed (occlusion, band clipping), nothing above 450 mm.
+    cluster_dim_min_m: 0.15
+    cluster_dim_max_m: 0.45
+
+    voxel_leaf_m: 0.01
+    pixel_stride: 2
+    max_spread_mm: 25.0
+
+    # Optical-frame Y (+down) acceptance band per block height, metres.
+    # TUNE ON ROBOT once the camera mount is final — depends on camera
+    # height/pitch. Wide defaults effectively disable the band until then.
+    y_band_a: [-2.0, 2.0]   # block A = 200 mm
+    y_band_b: [-2.0, 2.0]   # block B = 400 mm
+    y_band_c: [-2.0, 2.0]   # block C = 600 mm

@@ -1,0 +1,26 @@
+# Extrinsic transforms for the R2 visual servo stack.
+#
+# base_link_to_camera_link is WRITTEN BY r2_calibration's extrinsic
+# calibrator — do not hand-edit after calibration. Re-run calibration any
+# time the camera mount is physically disturbed or verification residual
+# exceeds 10 mm.
+#
+# base_link_to_gripper_link comes from CAD / tape measure of the gripper
+# mount; update it when the mechanism changes.
+#
+# calibrated: false means these are PLACEHOLDER values — the servo stack
+# will run but its output is meaningless until a real calibration is stored.
+
+calibrated: false
+
+base_link_to_camera_link:
+  parent: base_link
+  child: camera_link
+  translation: {x: 0.0, y: 0.0, z: 0.0}   # metres
+  rotation_rpy_deg: {roll: 0.0, pitch: 0.0, yaw: 0.0}
+
+base_link_to_gripper_link:
+  parent: base_link
+  child: gripper_link
+  translation: {x: 0.0, y: 0.0, z: 0.0}   # metres
+  rotation_rpy_deg: {roll: 0.0, pitch: 0.0, yaw: 0.0}

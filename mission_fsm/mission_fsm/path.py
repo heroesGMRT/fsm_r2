@@ -356,8 +356,10 @@ def generate_actions(route):
     actions = []
     facing = 'NORTH'
 
-    def emit(a, c=None):
-        actions.append((a, c))
+    def emit(a, c=None, **meta):
+        # meta carries structured params (target block, height) so the
+        # executor never has to parse them back out of the comment string.
+        actions.append((a, c, meta))
 
     def face(direction, desc):
         nonlocal facing
@@ -370,12 +372,15 @@ def generate_actions(route):
         # interior picks: rotate to face the adjacent block, then pick.
         for tgt in picks:
             face(direction_of(pos, tgt), f'block {tgt}')
-            emit('VISUAL_SERVO_BLOCK', f'align pickup to block {tgt}')
+            emit('VISUAL_SERVO_BLOCK', f'align pickup to block {tgt}',
+                 block=tgt, height=HEIGHTS[tgt])
             ref_tier = TIER_LEVEL['GROUND'] if pos == START else TIER_LEVEL[HEIGHTS[pos]]
             if TIER_LEVEL[HEIGHTS[tgt]] > ref_tier:
-                emit('PICK_BLOCK_UP', f'collect R2 KFS at block {tgt} (one tier above)')
+                emit('PICK_BLOCK_UP', f'collect R2 KFS at block {tgt} (one tier above)',
+                     block=tgt, height=HEIGHTS[tgt])
             else:
-                emit('PICK_BLOCK_DOWN', f'collect R2 KFS at block {tgt} (one tier below)')
+                emit('PICK_BLOCK_DOWN', f'collect R2 KFS at block {tgt} (one tier below)',
+                     block=tgt, height=HEIGHTS[tgt])
 
     # Entrance-zone column of each bottom-row block (0=left/block1, 1=block2, 2=right/block3)
     # Robot starts outside the bottom-middle, in front of block 2 (column 1).
@@ -400,8 +405,10 @@ def generate_actions(route):
         # sort picks by column so R2 sweeps rather than zig-zags
         for tgt in sorted(picks, key=lambda b: ENTRANCE_COL[b]):
             strafe_to(ENTRANCE_COL[tgt], f'strafe along entrance zone to face block {tgt}')
-            emit('VISUAL_SERVO_BLOCK', f'align pickup to block {tgt}')
-            emit('PICK_BLOCK_UP', f'collect bottom-row R2 KFS at block {tgt} from the Pathway')
+            emit('VISUAL_SERVO_BLOCK', f'align pickup to block {tgt}',
+                 block=tgt, height=HEIGHTS[tgt])
+            emit('PICK_BLOCK_UP', f'collect row-1 R2 KFS at block {tgt} from the Pathway',
+                 block=tgt, height=HEIGHTS[tgt])
 
         if picks:
             strafe_to(1, 'strafe back to face entrance block 2')
@@ -577,7 +584,7 @@ def report(r1, r2, fake):
     print(f"R2 foot-path: {' -> '.join(pos_disp)}  (+ descend off {route['exit_block']})")
 
     print('\nR2 action sequence:')
-    for i, (a, c) in enumerate(generate_actions(route), 1):
+    for i, (a, c, _meta) in enumerate(generate_actions(route), 1):
         print(f'  {i:>2}. {a:<20}{("   # " + c) if c else ""}')
 
 
