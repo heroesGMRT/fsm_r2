@@ -1,18 +1,59 @@
 """Forest executor node for Area 2.
 
 This node consumes the FSM Area 2 start command, runs the planner in
-``path.py``, and dispatches the generated high-level action sequence to the
-Teensy command bridge. The Teensy bridge is still a placeholder, so for now
-commands are fire-and-forget and Area 2 is marked complete after dispatch.
+``path.py``, and dispatches the generated high-level action sequence as
+Int32 commands on /fsm_command — the same topic used by the keyboard
+teleop node.  Integer values are taken directly from the HOTKEYS table
+in keyboard_teleop_node.py.  Actions that have no assigned integer (e.g.
+STRAFE_LEFT/RIGHT, ROTATE_270) are logged as warnings and skipped so
+the rest of the sequence can still execute.
 """
 
 import json
+import time
+
+from geometry_msgs.msg import Twist
+from std_msgs.msg import Int32
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String  # used for area_command / area_status / fsm_signal
 
 from . import path as forest_path
+
+# How fast and how long the robot moves forward for each DESCENT_FORWARD step.
+# Tune these to match the physical distance needed between wheel extensions.
+DESCENT_FORWARD_SPEED = 0.15   # m/s  (slow and controlled)
+DESCENT_FORWARD_SECS  = 1.0    # seconds per forward burst
+
+# ---------------------------------------------------------------------------
+# Action-string → /fsm_command integer mapping
+# Integer values match the HOTKEYS table in keyboard_teleop_node.py.
+# Add new entries here as more Teensy commands are defined.
+# ---------------------------------------------------------------------------
+ACTION_TO_CMD: dict[str, int | None] = {
+    # ── Approach & entry ──────────────────────────────────────────────────────
+    "FORWARD_INIT":         40,   # Start autonomous drive sequence (approach block 12)
+    "LIFT_CROSS_SEQUENCE":  300,  # lift↑ → fwd → front↓ → fwd → back↓ → fwd  (climb up to block 12)
+    # ── Forest traversal ─────────────────────────────────────────────────────
+    "CLIMB_UP":             104,  # BOTH lifts UP   (encoder/limit-switch)
+    "CLIMB_DOWN":           105,  # BOTH lifts DOWN (encoder/limit-switch)
+    "PICK_BLOCK_UP":        51,   # Arm Sequence S1
+    "PICK_BLOCK_DOWN":      52,   # Arm Sequence S2
+    "VISUAL_SERVO_BLOCK":   53,   # Arm Sequence S3
+    "ROTATE_90":            201,  # Chassis Macro M
+    "ROTATE_180":           202,  # Chassis Macro N
+    # ── Exit descent sequence (block 12 → ground) ─────────────────────────────
+    # fwd → extend front → fwd → extend back → fwd → retract both
+    "DESCENT_FORWARD":      "CMD_VEL",  # publish forward Twist (see DESCENT_FORWARD_SPEED/SECS)
+    "EXTEND_FRONT_WHEEL":   1000,   # front wheel extend
+    "EXTEND_BACK_WHEEL":    101,    # back wheel extend
+    "RETRACT_BOTH_WHEELS":  105,    # retract both wheels
+    # ── No hotkey equivalent yet ─────────────────────────────────────────────
+    "ROTATE_270":           None,  # TODO: assign integer when firmware ready
+    "STRAFE_LEFT":          None,  # TODO: assign integer when firmware ready
+    "STRAFE_RIGHT":         None,  # TODO: assign integer when firmware ready
+}
 
 
 class ForestExecutorNode(Node):
@@ -27,9 +68,14 @@ class ForestExecutorNode(Node):
             self._area_command_callback,
             10,
         )
-        self._teensy_cmd_pub = self.create_publisher(
-            String,
-            "/teensy/command",
+        self._fsm_cmd_pub = self.create_publisher(
+            Int32,
+            "/fsm_command",
+            10,
+        )
+        self._cmd_vel_pub = self.create_publisher(
+            Twist,
+            "/cmd_vel",
             10,
         )
         self._fsm_signal_pub = self.create_publisher(
@@ -45,7 +91,9 @@ class ForestExecutorNode(Node):
 
         self._running = False
         self.get_logger().info(
-            "ForestExecutor ready. Waiting for AREA_2 commands on /fsm/area_command"
+            "ForestExecutor ready. "
+            "Waiting for AREA_2 commands on /fsm/area_command  "
+            "(actions → /fsm_command Int32)"
         )
 
     def _area_command_callback(self, msg: String):
@@ -127,18 +175,39 @@ class ForestExecutorNode(Node):
         return blocks
 
     def _publish_teensy_command(self, index: int, total: int, action: str, comment: str):
-        msg = String()
-        msg.data = json.dumps(
-            {
-                "source": "forest_executor",
-                "sequence": index,
-                "total": total,
-                "command": action,
-                "comment": comment,
-            }
+        cmd_int = ACTION_TO_CMD.get(action)
+
+        # DESCENT_FORWARD is a plain cmd_vel forward burst, not a Teensy integer.
+        if cmd_int == "CMD_VEL":
+            self._publish_forward(index, total, comment)
+            return
+
+        if cmd_int is None:
+            self.get_logger().warn(
+                f"Forest command {index}/{total}: {action!r} has no integer mapping "
+                f"— skipping.  ({comment})"
+            )
+            return
+        msg = Int32()
+        msg.data = cmd_int
+        self._fsm_cmd_pub.publish(msg)
+        self.get_logger().info(
+            f"Forest command {index}/{total}: {action} → {cmd_int}  # {comment}"
         )
-        self._teensy_cmd_pub.publish(msg)
-        self.get_logger().info(f"Forest command {index}/{total}: {action} - {comment}")
+
+    def _publish_forward(self, index: int, total: int, comment: str):
+        """Publish a forward Twist for DESCENT_FORWARD_SECS seconds, then stop."""
+        self.get_logger().info(
+            f"Forest command {index}/{total}: DESCENT_FORWARD "
+            f"→ cmd_vel {DESCENT_FORWARD_SPEED} m/s × {DESCENT_FORWARD_SECS}s  # {comment}"
+        )
+        fwd = Twist()
+        fwd.linear.x = DESCENT_FORWARD_SPEED
+        stop = Twist()  # all zeros
+
+        self._cmd_vel_pub.publish(fwd)
+        time.sleep(DESCENT_FORWARD_SECS)
+        self._cmd_vel_pub.publish(stop)
 
     def _publish_status(self, status: str, detail):
         msg = String()

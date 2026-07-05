@@ -72,10 +72,10 @@ WANT_COLLECT = 2                     # R2 target number of R2 KFS to collect
 # ---------------------------------------------------------------------------
 GRID_COLS = 3
 ALL_BLOCKS = list(range(1, 13))
-ENTRANCE = 2
-VALID_EXITS_RANKED = [12, 10]        # 12 preferred (closer to Ramp)
+ENTRANCE = 2                         # robot climbs in via block 2 (bottom-middle)
+VALID_EXITS_RANKED = [12]            # robot always exits at block 12 (top-right)
 START = 0                            # virtual Pathway / entrance-zone node
-ENTRANCE_ROW = {1, 2, 3}
+ENTRANCE_ROW = {1, 2, 3}            # bottom row, reachable from outside before climbing
 
 HEIGHTS = {
     0: 'GROUND',
@@ -88,6 +88,20 @@ TIER_LEVEL = {'GROUND': 0, 'A': 1, 'B': 2, 'C': 3}
 TIER_MM = {'GROUND': 0, 'A': 200, 'B': 400, 'C': 600}
 COMPASS = ['NORTH', 'EAST', 'SOUTH', 'WEST']
 DISPLAY_ROWS = [[10, 11, 12], [7, 8, 9], [4, 5, 6], [1, 2, 3]]
+
+# Physical terrain heights of each block (independent of scoring-tier heights).
+# The robot can only step between ADJACENT physical levels (LOW<->MED, MED<->HIGH).
+# LOW:  2 6 10 12
+# MED:  1 3 5 7 9 11
+# HIGH: 4 8
+PHYSICAL_LEVEL = {
+    0: 'GROUND',
+    1: 'MED',  2: 'LOW',  3: 'MED',
+    4: 'HIGH', 5: 'MED',  6: 'LOW',
+    7: 'MED',  8: 'HIGH', 9: 'MED',
+    10: 'LOW', 11: 'MED', 12: 'LOW',
+}
+PHYS_ORDER = {'GROUND': 0, 'LOW': 1, 'MED': 2, 'HIGH': 3}
 
 
 # ---------------------------------------------------------------------------
@@ -107,11 +121,21 @@ def grid_neighbors(b):
     return out
 
 
+def phys_adjacent(a, b):
+    """True if the physical terrain levels of blocks a and b are adjacent
+    (i.e. differ by at most one step: GROUND/LOW/MED/HIGH).
+    START (virtual ground node) is always considered adjacent to ENTRANCE."""
+    if a == START or b == START:
+        return True
+    return abs(PHYS_ORDER[PHYSICAL_LEVEL[a]] - PHYS_ORDER[PHYSICAL_LEVEL[b]]) <= 1
+
+
 def move_neighbors(b):
-    """Blocks R2 can CLIMB to from b (must also be passable, checked later)."""
+    """Blocks R2 can CLIMB to from b (must also be passable, checked later).
+    Only returns blocks whose physical terrain level is adjacent to b."""
     if b == START:
-        return [ENTRANCE]          # can only climb in via block 2 (tier A)
-    return grid_neighbors(b)
+        return [ENTRANCE]          # robot enters via block 2 (bottom-middle)
+    return [n for n in grid_neighbors(b) if phys_adjacent(b, n)]
 
 
 def collect_neighbors(b):
@@ -122,6 +146,7 @@ def collect_neighbors(b):
 
 
 def direction_of(a, b):
+    # From START (outside bottom row) the robot faces NORTH to look at block 2.
     if a == START:
         return 'NORTH'
     ra, ca = divmod(a - 1, GRID_COLS)
@@ -352,16 +377,16 @@ def generate_actions(route):
             else:
                 emit('PICK_BLOCK_DOWN', f'collect R2 KFS at block {tgt} (one tier below)')
 
-    # Entrance-zone column of each row-1 block (0=left/block1, 1=block2, 2=right/block3)
+    # Entrance-zone column of each bottom-row block (0=left/block1, 1=block2, 2=right/block3)
+    # Robot starts outside the bottom-middle, in front of block 2 (column 1).
     ENTRANCE_COL = {1: 0, 2: 1, 3: 2}
 
     def do_start_picks(picks):
         """R2 begins on the Pathway in front of block 2 (column 1), facing
-        NORTH. To pick a row-1 KFS on block 1 or 3 it must STRAFE along the
-        flat entrance zone to be in front of that block, then pick (the block
-        is to its north, so no rotation). After all picks it strafes back to
-        in front of block 2 to climb in."""
-        lateral = 1  # column R2 is currently in front of (starts at block 2)
+        NORTH. To pick a bottom-row KFS on block 1 or 3 it strafes LEFT/RIGHT
+        along the entrance zone, picks, then strafes back to column 1 to
+        climb in via block 2."""
+        lateral = 1  # column R2 starts at (in front of block 2)
 
         def strafe_to(col, why):
             nonlocal lateral
@@ -376,29 +401,43 @@ def generate_actions(route):
         for tgt in sorted(picks, key=lambda b: ENTRANCE_COL[b]):
             strafe_to(ENTRANCE_COL[tgt], f'strafe along entrance zone to face block {tgt}')
             emit('VISUAL_SERVO_BLOCK', f'align pickup to block {tgt}')
-            emit('PICK_BLOCK_UP', f'collect row-1 R2 KFS at block {tgt} from the Pathway')
+            emit('PICK_BLOCK_UP', f'collect bottom-row R2 KFS at block {tgt} from the Pathway')
 
         if picks:
             strafe_to(1, 'strafe back to face entrance block 2')
 
-    emit('FORWARD_INIT', 'approach from 1m before block 2, waiting for R1 to clear the Forest')
+    # ── Entry sequence ────────────────────────────────────────────────────────
+    # Robot approaches from outside the bottom-middle, then lifts itself up
+    # onto the jungle blocks via the lift-cross sequence.
+    emit('FORWARD_INIT', 'approach from 1m outside block 2, bottom-middle entrance')
+    emit('LIFT_CROSS_SEQUENCE', 'lift both wheels → forward → front down → forward → back down → forward: climb up onto jungle at block 2')
 
-    # row-1 picks happen here, on the Pathway, with lateral strafing
+    # bottom-row picks from the Pathway before climbing in
     do_start_picks(trail[0][1])
 
+    # ── Traverse the forest ───────────────────────────────────────────────────
     for i in range(len(trail) - 1):
         a = trail[i][0]
         b, picks_b = trail[i + 1]
         face(direction_of(a, b), f'block {b}')
-        from_label = 'Pathway (ground)' if a == START else f'block {a} ({HEIGHTS[a]})'
-        to_label = f'block {b} ({HEIGHTS[b]}, {TIER_MM[HEIGHTS[b]]}mm)'
+        from_label = 'Pathway (ground)' if a == START else f'block {a} ({HEIGHTS[a]}, {PHYSICAL_LEVEL[a]})'
+        to_label   = f'block {b} ({HEIGHTS[b]}, {PHYSICAL_LEVEL[b]}, {TIER_MM[HEIGHTS[b]]}mm)'
         if TIER_LEVEL[HEIGHTS[b]] > (TIER_LEVEL['GROUND'] if a == START else TIER_LEVEL[HEIGHTS[a]]):
-            emit('CLIMB_UP', f'{from_label} -> {to_label}')
+            emit('CLIMB_UP',   f'{from_label} -> {to_label}')
         else:
             emit('CLIMB_DOWN', f'{from_label} -> {to_label}')
         do_picks(b, picks_b)
 
-    emit('CLIMB_DOWN', f'block {exit_block} ({HEIGHTS[exit_block]}) -> Pathway (ground), EXIT Forest')
+    # ── Exit sequence (block 12, top-right) ───────────────────────────────────
+    # Robot descends from block 12 back to ground level using a 6-step sequence.
+    emit('CLIMB_DOWN',
+         f'block {exit_block} ({HEIGHTS[exit_block]}, {PHYSICAL_LEVEL[exit_block]}) -> Pathway (ground), EXIT Forest')
+    emit('DESCENT_FORWARD',     'move forward off block 12')
+    emit('EXTEND_FRONT_WHEEL',  'lower front wheel to ground')
+    emit('DESCENT_FORWARD',     'move forward: front wheel on ground, rear still elevated')
+    emit('EXTEND_BACK_WHEEL',   'lower back wheel to ground')
+    emit('DESCENT_FORWARD',     'move forward: both wheels on ground')
+    emit('RETRACT_BOTH_WHEELS', 'retract both wheels to normal driving position')
     return actions
 
 
