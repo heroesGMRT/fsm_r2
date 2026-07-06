@@ -9,7 +9,8 @@ clear to open one.
 Why R1 matters now (rule-driven):
 - Rule 8.10: R2 commits a violation if it MOVES ONTO a block that still has
   a KFS on it. So every block R2 physically stands on must be empty at the
-  moment it steps there.
+  moment it steps there -- unless R2 is COLLECTING that KFS as it climbs on
+  (see the pick model below).
 - Rule 4.4.16 + 8.8 + 8.9: R2 may only collect R2 KFS. R2 touching an R1 KFS
   (outside the Arena) or the Fake KFS is a violation. So R2 CANNOT clear R1
   KFS blocks or the Fake block to make a path.
@@ -34,6 +35,25 @@ as many times as needed, so R1 can ultimately clear all 3 of its KFS over
 multiple trips. The tool reports the minimal clear-set and flags if it needs
 more than one R1 trip.
 
+PICK MODEL (per UPDATE.md Layer A -- replaces the old "stationary reach"):
+- A pick is a PARTIAL CLIMB onto the target block, performed from an
+  adjacent block exactly ONE TIER away: align, extend pneumatics, drive
+  halfway onto the target grid, pick, then EITHER complete the climb onto
+  the block OR reverse back to the previous block (R2's choice -- reversing
+  preserves routing flexibility). Both outcomes are searched.
+- All in-forest adjacencies are exactly one tier, so interior picks are
+  always mechanically valid. From the Pathway (ground) only block 2 (tier A,
+  200mm) is one tier up; blocks 1 and 3 (tier B, 400mm) are a two-tier reach
+  and CANNOT be picked from the Pathway. No entrance-zone strafing exists.
+- R2 KFS on block 1 or 3 must be picked from INSIDE the forest, from a
+  one-tier neighbor (block 2, 4, or 6).
+- Rule 4.4.14 is NOT enforced (dropped per UPDATE.md A3). If block 2 holds
+  an R2 KFS, R2 must pick it to enter anyway (it is the only entrance), so
+  that case orders itself via passability; no other first-pick forcing.
+- Downward picks: the choreography for reversing back UP mid-descent is
+  undefined on the bridge, so a downward pick is only generated as
+  "complete onto the block" (never pick-then-reverse).
+
 Grid (display orientation, entrance row at bottom):
     10  11  12
     7   8   9
@@ -43,13 +63,19 @@ Grid (display orientation, entrance row at bottom):
 Heights (right-side team, A=200 B=400 C=600):
     1:B 2:A 3:B  4:C 5:B 6:A  7:B 8:C 9:B  10:A 11:B 12:A
 
+TOGGLES:
+[T1] NO_DOWNWARD_PICK (default False): when True, R2 may not pick a KFS on
+     a block one tier BELOW its current block -- every KFS must be collected
+     via an UPWARD approach. Picking during a descent is the mechanically
+     risky maneuver; this mode avoids it for bench testing. Some layouts get
+     longer paths / more R1 clearing or become impossible -- that is
+     intended and reported via the normal status.
+[T2] dev_free_path_actions(): dev-only mode that compiles an operator-given
+     ordered block route into CLIMB_UP/CLIMB_DOWN (+ROTATE) primitives with
+     NO picks and NO rule checks. Separate entry point from plan() so it
+     cannot be used for a real run by accident.
+
 FLAGGED RULE INTERPRETATIONS (please confirm -- they affect results):
-[I1] Rule 4.4.14 "R2 must collect its first KFS from blocks 1,2,3 from the
-     R2 Entrance Zone": implemented as "the FIRST R2 KFS R2 collects must be
-     located on block 1, 2, or 3." Toggle: ENFORCE_FIRST_FROM_ENTRANCE.
-[I2] Entrance-zone reach: while still on the Pathway (before climbing in),
-     R2 may pick an R2 KFS off block 1, 2, or 3 (assuming it can move along
-     the flat entrance zone in front of all three). Toggle: ENTRANCE_ZONE_REACH.
 [I3] Entry is via block 2 only (sole tier-A entrance block); exits are 10 or
      12 only (sole tier-A exit blocks; 11 is tier B -> 2-tier drop disallowed).
 [I4] Fake block treated as fully impassable; never stepped on.
@@ -59,10 +85,9 @@ from collections import deque
 from itertools import combinations
 
 # ---------------------------------------------------------------------------
-# Config toggles for flagged interpretations
+# Config toggles
 # ---------------------------------------------------------------------------
-ENFORCE_FIRST_FROM_ENTRANCE = True   # [I1]
-ENTRANCE_ZONE_REACH = True           # [I2]
+NO_DOWNWARD_PICK = False             # [T1] forbid picks one tier below
 R2_CAPACITY = 2
 R1_CAPACITY = 2
 WANT_COLLECT = 2                     # R2 target number of R2 KFS to collect
@@ -72,10 +97,10 @@ WANT_COLLECT = 2                     # R2 target number of R2 KFS to collect
 # ---------------------------------------------------------------------------
 GRID_COLS = 3
 ALL_BLOCKS = list(range(1, 13))
-ENTRANCE = 2                         # robot climbs in via block 2 (bottom-middle)
-VALID_EXITS_RANKED = [12]            # robot always exits at block 12 (top-right)
+ENTRANCE = 2
+VALID_EXITS_RANKED = [12, 10]        # 12 preferred (closer to Ramp)
 START = 0                            # virtual Pathway / entrance-zone node
-ENTRANCE_ROW = {1, 2, 3}            # bottom row, reachable from outside before climbing
+ENTRANCE_ROW = {1, 2, 3}
 
 HEIGHTS = {
     0: 'GROUND',
@@ -88,20 +113,6 @@ TIER_LEVEL = {'GROUND': 0, 'A': 1, 'B': 2, 'C': 3}
 TIER_MM = {'GROUND': 0, 'A': 200, 'B': 400, 'C': 600}
 COMPASS = ['NORTH', 'EAST', 'SOUTH', 'WEST']
 DISPLAY_ROWS = [[10, 11, 12], [7, 8, 9], [4, 5, 6], [1, 2, 3]]
-
-# Physical terrain heights of each block (independent of scoring-tier heights).
-# The robot can only step between ADJACENT physical levels (LOW<->MED, MED<->HIGH).
-# LOW:  2 6 10 12
-# MED:  1 3 5 7 9 11
-# HIGH: 4 8
-PHYSICAL_LEVEL = {
-    0: 'GROUND',
-    1: 'MED',  2: 'LOW',  3: 'MED',
-    4: 'HIGH', 5: 'MED',  6: 'LOW',
-    7: 'MED',  8: 'HIGH', 9: 'MED',
-    10: 'LOW', 11: 'MED', 12: 'LOW',
-}
-PHYS_ORDER = {'GROUND': 0, 'LOW': 1, 'MED': 2, 'HIGH': 3}
 
 
 # ---------------------------------------------------------------------------
@@ -121,32 +132,25 @@ def grid_neighbors(b):
     return out
 
 
-def phys_adjacent(a, b):
-    """True if the physical terrain levels of blocks a and b are adjacent
-    (i.e. differ by at most one step: GROUND/LOW/MED/HIGH).
-    START (virtual ground node) is always considered adjacent to ENTRANCE."""
-    if a == START or b == START:
-        return True
-    return abs(PHYS_ORDER[PHYSICAL_LEVEL[a]] - PHYS_ORDER[PHYSICAL_LEVEL[b]]) <= 1
+def tier(b):
+    return TIER_LEVEL[HEIGHTS[b]]
 
 
 def move_neighbors(b):
-    """Blocks R2 can CLIMB to from b (must also be passable, checked later).
-    Only returns blocks whose physical terrain level is adjacent to b."""
+    """Blocks R2 can CLIMB to from b (must also be passable, checked later)."""
     if b == START:
-        return [ENTRANCE]          # robot enters via block 2 (bottom-middle)
-    return [n for n in grid_neighbors(b) if phys_adjacent(b, n)]
-
-
-def collect_neighbors(b):
-    """Blocks R2 can REACH INTO to pick a KFS from position b (rule 4.4.15)."""
-    if b == START:
-        return list(ENTRANCE_ROW) if ENTRANCE_ZONE_REACH else [ENTRANCE]
+        return [ENTRANCE]          # can only climb in via block 2 (tier A)
     return grid_neighbors(b)
 
 
+def pick_neighbors(b):
+    """Blocks R2 can PICK from position b (a pick is a partial one-tier
+    climb, so the pickable set equals the climbable set: from the Pathway
+    only block 2 is one tier up; blocks 1/3 are two tiers and unreachable)."""
+    return move_neighbors(b)
+
+
 def direction_of(a, b):
-    # From START (outside bottom row) the robot faces NORTH to look at block 2.
     if a == START:
         return 'NORTH'
     ra, ca = divmod(a - 1, GRID_COLS)
@@ -160,19 +164,33 @@ def rotation_needed(cur, tgt):
     return ((COMPASS.index(tgt) - COMPASS.index(cur)) % 4) * 90
 
 
+def block_label(b):
+    if b == START:
+        return 'Pathway (ground)'
+    return f'block {b} ({HEIGHTS[b]}, {TIER_MM[HEIGHTS[b]]}mm)'
+
+
 # ---------------------------------------------------------------------------
 # Core R2 search for a FIXED set of cleared R1 blocks
 # ---------------------------------------------------------------------------
-def r2_search(r1_blocks, r2_blocks, fake_block, cleared_r1, want=WANT_COLLECT):
+def r2_search(r1_blocks, r2_blocks, fake_block, cleared_r1, want=WANT_COLLECT,
+              no_downward_pick=NO_DOWNWARD_PICK):
     """
     Find shortest legal R2 plan given which R1 blocks are cleared.
-    Returns dict(path, collected, exit_block, picks) or None.
+    Returns dict(positions, events, collected, exit_block, steps) or None.
 
-    State = (position, frozenset(collected_blocks), first_done_flag).
+    State = (position, frozenset(collected_blocks)).
+    Events (the maneuver sequence, implicit start at START):
+        ('MOVE', b)          -- climb up/down onto empty/cleared block b
+        ('PICK', t, end_on)  -- partial-climb pick of the R2 KFS on t;
+                                end_on=True  -> completes the climb onto t
+                                end_on=False -> reverses back, stays put
     A block is foot-passable iff:
         - it's empty (no scroll), OR
         - it's an R2 KFS block already in `collected` (emptied on pickup), OR
         - it's an R1 block in `cleared_r1`.
+    Stepping onto an uncollected R2 KFS block is only possible AS the pick
+    that collects it (rule 8.10), which is what ('PICK', t, True) encodes.
     """
     r1_set = set(r1_blocks)
     r2_set = set(r2_blocks)
@@ -187,13 +205,7 @@ def r2_search(r1_blocks, r2_blocks, fake_block, cleared_r1, want=WANT_COLLECT):
             return False
         return True
 
-    best = None  # (steps, ramp_rank, path, collected_order, exit_block)
-
-    # Rule 4.4.14 only binds when at least one R2 KFS actually sits on the
-    # entrance row (blocks 1/2/3). If none do, R2 is free to collect its
-    # first KFS anywhere (per Wafdan's clarification).
-    has_entrance_r2 = bool(r2_set & ENTRANCE_ROW)
-    enforce_first = ENFORCE_FIRST_FROM_ENTRANCE and has_entrance_r2
+    best = None  # (steps, ramp_rank, events, exit_block)
 
     for exit_block in VALID_EXITS_RANKED:
         if not passable(exit_block, frozenset(r2_set)):
@@ -203,64 +215,53 @@ def r2_search(r1_blocks, r2_blocks, fake_block, cleared_r1, want=WANT_COLLECT):
             if exit_block not in r2_set:
                 continue
 
-        start_state = (START, frozenset(), False)
-        # path stores list of (position, picks_made_at_this_position)
+        start_state = (START, frozenset())
         visited = {start_state}
-        queue = deque([(start_state, [(START, [])])])
+        queue = deque([(start_state, [])])
         found = None
 
         while queue:
-            (pos, collected, first_done), trail = queue.popleft()
+            (pos, collected), events = queue.popleft()
 
             if pos == exit_block and len(collected) == want:
-                found = trail
+                found = events
                 break
 
-            # --- Option 1: pick an adjacent R2 KFS (if capacity remains) ---
+            # --- Option 1: pick an adjacent one-tier R2 KFS (partial climb) ---
             if len(collected) < want:
-                for tgt in collect_neighbors(pos):
-                    if tgt in r2_set and tgt not in collected:
-                        # Row-1 R2 KFS (blocks 1/2/3) must be picked from the
-                        # Pathway (START), never by reaching back from an
-                        # interior block after climbing in.
-                        if tgt in ENTRANCE_ROW and pos != START:
-                            continue
-                        # 4.4.14 (only when an entrance-row R2 KFS exists):
-                        # the FIRST collected KFS must be on the entrance row.
-                        if (enforce_first and not first_done
-                                and tgt not in ENTRANCE_ROW):
-                            continue
-                        new_collected = collected | {tgt}
-                        new_state = (pos, new_collected, True)
-                        if new_state not in visited:
-                            visited.add(new_state)
-                            # record pick at current position
-                            new_trail = trail[:-1] + [(pos, trail[-1][1] + [tgt])]
-                            queue.append((new_state, new_trail))
+                for tgt in pick_neighbors(pos):
+                    if tgt not in r2_set or tgt in collected:
+                        continue
+                    downward = tier(tgt) < tier(pos)
+                    if no_downward_pick and downward:
+                        continue
+                    new_collected = collected | {tgt}
+                    # (a) complete the climb onto the picked block
+                    state = (tgt, new_collected)
+                    if state not in visited:
+                        visited.add(state)
+                        queue.append((state, events + [('PICK', tgt, True)]))
+                    # (b) reverse back after picking (upward picks only: the
+                    # bridge has no choreography for backing UP mid-descent)
+                    if not downward:
+                        state = (pos, new_collected)
+                        if state not in visited:
+                            visited.add(state)
+                            queue.append((state, events + [('PICK', tgt, False)]))
 
             # --- Option 2: climb to an adjacent passable block ---
-            # 4.4.14 guard: when an entrance-row R2 KFS exists, R2 may not
-            # leave the entrance zone (START) before making its first
-            # (entrance-row) collection. When none exists, R2 climbs freely.
-            block_climb_from_start = (enforce_first and not first_done
-                                       and pos == START)
-            if not block_climb_from_start:
-                for nxt in move_neighbors(pos):
-                    if not passable(nxt, collected):
-                        continue
-                    new_state = (nxt, collected, first_done)
-                    if new_state not in visited:
-                        visited.add(new_state)
-                        queue.append((new_state, trail + [(nxt, [])]))
+            for nxt in move_neighbors(pos):
+                if not passable(nxt, collected):
+                    continue
+                state = (nxt, collected)
+                if state not in visited:
+                    visited.add(state)
+                    queue.append((state, events + [('MOVE', nxt)]))
 
         if found is None:
             continue
 
-        steps = sum(1 for (p, _) in found if p != START) - 0  # block hops
-        # simpler: number of climbs = len of positions excluding START minus
-        # transitions; use path length
-        positions = [p for (p, _) in found]
-        steps = len(positions) - 1
+        steps = len(found)                     # number of maneuvers
         ramp_rank = VALID_EXITS_RANKED.index(exit_block)
         key = (steps, ramp_rank)
         if best is None or key < (best[0], best[1]):
@@ -269,13 +270,20 @@ def r2_search(r1_blocks, r2_blocks, fake_block, cleared_r1, want=WANT_COLLECT):
     if best is None:
         return None
 
-    steps, ramp_rank, trail, exit_block = best
-    positions = [p for (p, _) in trail]
-    picks_at = {p: picks for (p, picks) in trail}
-    collected_order = [b for (_, picks) in trail for b in picks]
+    steps, ramp_rank, events, exit_block = best
+    positions = [START]
+    collected_order = []
+    for event in events:
+        if event[0] == 'MOVE':
+            positions.append(event[1])
+        else:
+            _, tgt, end_on = event
+            collected_order.append(tgt)
+            if end_on:
+                positions.append(tgt)
     return {
-        'positions': positions,         # includes START at front
-        'trail': trail,                  # list of (pos, [picks at pos])
+        'positions': positions,          # blocks stood on, START at front
+        'events': events,                # maneuver list, see docstring
         'collected': collected_order,
         'exit_block': exit_block,
         'steps': steps,
@@ -285,7 +293,8 @@ def r2_search(r1_blocks, r2_blocks, fake_block, cleared_r1, want=WANT_COLLECT):
 # ---------------------------------------------------------------------------
 # Top-level planner
 # ---------------------------------------------------------------------------
-def plan(r1_blocks, r2_blocks, fake_block, want=WANT_COLLECT):
+def plan(r1_blocks, r2_blocks, fake_block, want=WANT_COLLECT,
+         no_downward_pick=NO_DOWNWARD_PICK):
     """
     Returns a dict describing the outcome:
       status: 'ok_no_clear' | 'ok_needs_clear' | 'impossible'
@@ -310,7 +319,8 @@ def plan(r1_blocks, r2_blocks, fake_block, want=WANT_COLLECT):
         for size in range(0, len(r1_set) + 1):
             for clear_combo in combinations(r1_set, size):
                 route = r2_search(r1_blocks, r2_blocks, fake_block,
-                                  cleared_r1=set(clear_combo), want=target)
+                                  cleared_r1=set(clear_combo), want=target,
+                                  no_downward_pick=no_downward_pick)
                 if route is None:
                     continue
                 # Which R1 blocks does this path ACTUALLY step on?
@@ -351,14 +361,24 @@ def plan(r1_blocks, r2_blocks, fake_block, want=WANT_COLLECT):
 # Action sequence generation
 # ---------------------------------------------------------------------------
 def generate_actions(route):
-    trail = route['trail']
+    """Compile a planned route into executor primitives.
+
+    Emits FORWARD_INIT, ROTATE_90/180/270, CLIMB_UP/CLIMB_DOWN, and
+    PICK_BLOCK_UP/PICK_BLOCK_DOWN. No VISUAL_SERVO_BLOCK: the KFS visual
+    servo is dropped from the flow for now (UPDATE.md A6) -- picks are
+    positioned purely by the climb-on drive (odometry/IR). Pick meta carries
+    end_on: True = complete the climb onto the picked block, False = reverse
+    back to the block the pick was made from.
+    """
+    events = route['events']
     exit_block = route['exit_block']
     actions = []
     facing = 'NORTH'
+    pos = START
 
     def emit(a, c=None, **meta):
-        # meta carries structured params (target block, height) so the
-        # executor never has to parse them back out of the comment string.
+        # meta carries structured params (target block, height, end_on) so
+        # the executor never has to parse them back out of the comment.
         actions.append((a, c, meta))
 
     def face(direction, desc):
@@ -368,83 +388,96 @@ def generate_actions(route):
             emit(f'ROTATE_{rot}', f'turn to face {desc}')
             facing = direction
 
-    def do_picks(pos, picks):
-        # interior picks: rotate to face the adjacent block, then pick.
-        for tgt in picks:
-            face(direction_of(pos, tgt), f'block {tgt}')
-            emit('VISUAL_SERVO_BLOCK', f'align pickup to block {tgt}',
-                 block=tgt, height=HEIGHTS[tgt])
-            ref_tier = TIER_LEVEL['GROUND'] if pos == START else TIER_LEVEL[HEIGHTS[pos]]
-            if TIER_LEVEL[HEIGHTS[tgt]] > ref_tier:
-                emit('PICK_BLOCK_UP', f'collect R2 KFS at block {tgt} (one tier above)',
-                     block=tgt, height=HEIGHTS[tgt])
+    emit('FORWARD_INIT',
+         'approach from 1m before block 2, waiting for R1 to clear the Forest')
+
+    for event in events:
+        if event[0] == 'MOVE':
+            b = event[1]
+            face(direction_of(pos, b), f'block {b}')
+            if tier(b) > tier(pos):
+                emit('CLIMB_UP', f'{block_label(pos)} -> {block_label(b)}')
             else:
-                emit('PICK_BLOCK_DOWN', f'collect R2 KFS at block {tgt} (one tier below)',
-                     block=tgt, height=HEIGHTS[tgt])
-
-    # Entrance-zone column of each bottom-row block (0=left/block1, 1=block2, 2=right/block3)
-    # Robot starts outside the bottom-middle, in front of block 2 (column 1).
-    ENTRANCE_COL = {1: 0, 2: 1, 3: 2}
-
-    def do_start_picks(picks):
-        """R2 begins on the Pathway in front of block 2 (column 1), facing
-        NORTH. To pick a bottom-row KFS on block 1 or 3 it strafes LEFT/RIGHT
-        along the entrance zone, picks, then strafes back to column 1 to
-        climb in via block 2."""
-        lateral = 1  # column R2 starts at (in front of block 2)
-
-        def strafe_to(col, why):
-            nonlocal lateral
-            while lateral < col:
-                emit('STRAFE_RIGHT', why)
-                lateral += 1
-            while lateral > col:
-                emit('STRAFE_LEFT', why)
-                lateral -= 1
-
-        # sort picks by column so R2 sweeps rather than zig-zags
-        for tgt in sorted(picks, key=lambda b: ENTRANCE_COL[b]):
-            strafe_to(ENTRANCE_COL[tgt], f'strafe along entrance zone to face block {tgt}')
-            emit('VISUAL_SERVO_BLOCK', f'align pickup to block {tgt}',
-                 block=tgt, height=HEIGHTS[tgt])
-            emit('PICK_BLOCK_UP', f'collect row-1 R2 KFS at block {tgt} from the Pathway',
-                 block=tgt, height=HEIGHTS[tgt])
-
-        if picks:
-            strafe_to(1, 'strafe back to face entrance block 2')
-
-    # ── Entry sequence ────────────────────────────────────────────────────────
-    # Robot approaches from outside the bottom-middle, then lifts itself up
-    # onto the jungle blocks via the lift-cross sequence.
-    emit('FORWARD_INIT', 'approach from 1m outside block 2, bottom-middle entrance')
-    emit('LIFT_CROSS_SEQUENCE', 'lift both wheels → forward → front down → forward → back down → forward: climb up onto jungle at block 2')
-
-    # bottom-row picks from the Pathway before climbing in
-    do_start_picks(trail[0][1])
-
-    # ── Traverse the forest ───────────────────────────────────────────────────
-    for i in range(len(trail) - 1):
-        a = trail[i][0]
-        b, picks_b = trail[i + 1]
-        face(direction_of(a, b), f'block {b}')
-        from_label = 'Pathway (ground)' if a == START else f'block {a} ({HEIGHTS[a]}, {PHYSICAL_LEVEL[a]})'
-        to_label   = f'block {b} ({HEIGHTS[b]}, {PHYSICAL_LEVEL[b]}, {TIER_MM[HEIGHTS[b]]}mm)'
-        if TIER_LEVEL[HEIGHTS[b]] > (TIER_LEVEL['GROUND'] if a == START else TIER_LEVEL[HEIGHTS[a]]):
-            emit('CLIMB_UP',   f'{from_label} -> {to_label}')
+                emit('CLIMB_DOWN', f'{block_label(pos)} -> {block_label(b)}')
+            pos = b
         else:
-            emit('CLIMB_DOWN', f'{from_label} -> {to_label}')
-        do_picks(b, picks_b)
+            _, tgt, end_on = event
+            face(direction_of(pos, tgt), f'block {tgt}')
+            upward = tier(tgt) > tier(pos)
+            finish = ('complete climb onto it' if end_on
+                      else f'reverse back to {block_label(pos)}')
+            emit('PICK_BLOCK_UP' if upward else 'PICK_BLOCK_DOWN',
+                 f'partial-climb pick of R2 KFS at {block_label(tgt)}, '
+                 f'then {finish}',
+                 block=tgt, height=HEIGHTS[tgt], end_on=end_on)
+            if end_on:
+                pos = tgt
 
-    # ── Exit sequence (block 12, top-right) ───────────────────────────────────
-    # Robot descends from block 12 back to ground level using a 6-step sequence.
     emit('CLIMB_DOWN',
-         f'block {exit_block} ({HEIGHTS[exit_block]}, {PHYSICAL_LEVEL[exit_block]}) -> Pathway (ground), EXIT Forest')
-    emit('DESCENT_FORWARD',     'move forward off block 12')
-    emit('EXTEND_FRONT_WHEEL',  'lower front wheel to ground')
-    emit('DESCENT_FORWARD',     'move forward: front wheel on ground, rear still elevated')
-    emit('EXTEND_BACK_WHEEL',   'lower back wheel to ground')
-    emit('DESCENT_FORWARD',     'move forward: both wheels on ground')
-    emit('RETRACT_BOTH_WHEELS', 'retract both wheels to normal driving position')
+         f'{block_label(exit_block)} -> Pathway (ground), EXIT Forest')
+    return actions
+
+
+# ---------------------------------------------------------------------------
+# Dev / free-path mode (UPDATE.md A5) -- NOT for competition runs
+# ---------------------------------------------------------------------------
+def dev_free_path_actions(blocks, descend_exit=False):
+    """Compile an operator-specified block route into climb primitives.
+
+    Bench-test mode: walks the given ordered block list, ignoring KFS/Fake/R1
+    occupancy and every passability rule. Emits ONLY ROTATE_* and
+    CLIMB_UP/CLIMB_DOWN -- no picks. The route starts with R2 on the Pathway
+    facing the first block; if descend_exit is True a final CLIMB_DOWN off
+    the last block back to the Pathway is appended.
+
+    Consecutive blocks must be grid-adjacent (otherwise the primitives are
+    meaningless); tier rules are NOT checked beyond a warning comment when
+    the first block is not tier A (a >1-tier climb from the ground is not
+    mechanically possible -- the operator is trusted in this mode).
+    """
+    if not blocks:
+        raise ValueError('dev_free_path: route is empty')
+    for b in blocks:
+        if not isinstance(b, int) or not 1 <= b <= 12:
+            raise ValueError(f'dev_free_path: invalid block {b!r}')
+    for a, b in zip(blocks, blocks[1:]):
+        if b not in grid_neighbors(a):
+            raise ValueError(
+                f'dev_free_path: blocks {a} and {b} are not adjacent')
+
+    actions = []
+    facing = 'NORTH'
+    pos = START
+
+    def emit(a, c=None, **meta):
+        actions.append((a, c, meta))
+
+    def face(direction, desc):
+        nonlocal facing
+        rot = rotation_needed(facing, direction)
+        if rot:
+            emit(f'ROTATE_{rot}', f'turn to face {desc}')
+            facing = direction
+
+    first = blocks[0]
+    warn = ('' if HEIGHTS[first] == 'A'
+            else f' [WARNING: {TIER_MM[HEIGHTS[first]]}mm is >1 tier from ground]')
+    emit('CLIMB_UP', f'{block_label(pos)} -> {block_label(first)}{warn}')
+    pos = first
+
+    for b in blocks[1:]:
+        face(direction_of(pos, b), f'block {b}')
+        if tier(b) > tier(pos):
+            emit('CLIMB_UP', f'{block_label(pos)} -> {block_label(b)}')
+        else:
+            emit('CLIMB_DOWN', f'{block_label(pos)} -> {block_label(b)}')
+        pos = b
+
+    if descend_exit:
+        warn = ('' if HEIGHTS[pos] == 'A'
+                else f' [WARNING: {TIER_MM[HEIGHTS[pos]]}mm is >1 tier to ground]')
+        emit('CLIMB_DOWN', f'{block_label(pos)} -> Pathway (ground){warn}')
+
     return actions
 
 
@@ -529,14 +562,16 @@ def parse_single(prompt, taken):
         return b
 
 
-def report(r1, r2, fake):
-    result = plan(r1, r2, fake)
+def report(r1, r2, fake, no_downward_pick=NO_DOWNWARD_PICK):
+    result = plan(r1, r2, fake, no_downward_pick=no_downward_pick)
     print()
     print(f'R1 KFS : {sorted(r1)}')
     print(f'R2 KFS : {sorted(r2)}')
     print(f'Fake   : {fake}')
     empties = [b for b in ALL_BLOCKS if b not in set(r1) | set(r2) | {fake}]
     print(f'Empty  : {empties}')
+    if no_downward_pick:
+        print('MODE   : no_downward_pick (every KFS via an upward approach)')
 
     route = result['route']
     clear_set = result['clear_set']
@@ -544,6 +579,9 @@ def report(r1, r2, fake):
     if result['status'] == 'impossible':
         print_grid(r1, r2, fake)
         print('RESULT: NO LEGAL PATH, even if R1 clears all of its KFS.')
+        if no_downward_pick:
+            print('NOTE: no_downward_pick is ON; the layout may be solvable')
+            print('with downward picks allowed.')
         print('The exit is walled off by obstacles R2 may not move (Fake KFS')
         print('and/or uncollected R2 KFS). No R1 action can fix this.')
         return
@@ -598,7 +636,8 @@ def main():
         r1 = parse_blocks('R1 KFS blocks (3, boundary only, e.g. 1 3 10): ', 3, set(), boundary_only=True)
         r2 = parse_blocks('R2 KFS blocks (4, e.g. 5 6 8 11): ', 4, set(r1))
         fake = parse_single('Fake KFS block (1, not 1/2/3): ', set(r1) | set(r2))
-        report(r1, r2, fake)
+        ndp = input('Forbid downward picks (no_downward_pick)? (y/N): ').strip().lower() == 'y'
+        report(r1, r2, fake, no_downward_pick=ndp)
         print()
         if input('Plan another? (y/n): ').strip().lower() != 'y':
             break
