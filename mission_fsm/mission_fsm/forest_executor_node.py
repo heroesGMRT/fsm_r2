@@ -1,16 +1,24 @@
 """Forest executor node for Area 2.
 
 Consumes the FSM Area 2 start command, runs the planner in ``path.py``, and
-executes the generated action sequence ONE PRIMITIVE AT A TIME:
+executes the generated action sequence ONE PRIMITIVE AT A TIME: every
+primitive is published as JSON on ``/teensy/command`` and the executor waits
+for a matching completion ack on ``/teensy/ack``::
 
-* ``VISUAL_SERVO_BLOCK`` → calls the ``align_and_pick`` action
-  (r2_servo/pick_servo_node) with the target block id and height, and waits
-  for the alignment result. One retry on failure.
-* every other primitive → published as JSON on ``/teensy/command`` and the
-  executor waits for a matching completion ack on ``/teensy/ack``:
-  ``{"sequence": <int>, "status": "done" | "error"}``. The placeholder
-  Teensy bridge acks instantly; the real bridge must ack when the motion
-  actually finishes.
+    {"sequence": <int>, "status": "done" | "error"}
+
+The Teensy bridge must ack only when the motion actually finishes.
+
+The KFS visual servo is dropped from the flow for now (UPDATE.md A6): the
+planner emits no ``VISUAL_SERVO_BLOCK`` and this node never calls the
+``align_and_pick`` action server. The servo stack (``r2_stack/``) stays in
+the tree, dormant, for later re-enablement. Picks are positioned purely by
+the climb-on drive (odometry/IR).
+
+Dev/free-path mode (UPDATE.md A5): a separate ``dev_free_path`` command on
+``/fsm/area_command`` compiles an operator-given block route into climb
+primitives (no picks, no rules) for bench-testing the climb choreography.
+It never publishes ``area_complete``, so it cannot advance the mission FSM.
 
 All waiting is timer-driven (10 Hz tick) — nothing blocks the executor, in
 keeping with the rest of mission_fsm.
@@ -19,27 +27,15 @@ keeping with the rest of mission_fsm.
 import json
 
 import rclpy
-from rclpy.action import ActionClient
 from rclpy.node import Node
-from action_msgs.msg import GoalStatus
 from std_msgs.msg import String
 
-from r2_interfaces.action import AlignAndPick
-
 from . import path as forest_path
-
-# Planner block heights 'A'/'B'/'C' → AlignAndPick height enum.
-_HEIGHT_ENUM = {
-    'A': AlignAndPick.Goal.HEIGHT_A,
-    'B': AlignAndPick.Goal.HEIGHT_B,
-    'C': AlignAndPick.Goal.HEIGHT_C,
-}
 
 # Sequencer states
 _IDLE = 'IDLE'
 _DISPATCH = 'DISPATCH'
 _WAIT_ACK = 'WAIT_ACK'
-_WAIT_SERVO = 'WAIT_SERVO'
 
 
 class ForestExecutorNode(Node):
@@ -49,8 +45,6 @@ class ForestExecutorNode(Node):
         super().__init__("forest_executor")
 
         self.declare_parameter('ack_timeout_s', 30.0)
-        self.declare_parameter('servo_timeout_s', 90.0)
-        self.declare_parameter('servo_retries', 1)
 
         self._area_cmd_sub = self.create_subscription(
             String, "/fsm/area_command", self._area_command_callback, 10)
@@ -60,20 +54,14 @@ class ForestExecutorNode(Node):
         self._fsm_signal_pub = self.create_publisher(String, "/fsm/signal", 10)
         self._status_pub = self.create_publisher(String, "/fsm/area_status", 10)
 
-        self._servo_client = ActionClient(self, AlignAndPick, 'align_and_pick')
-
         # Sequencer state
         self._state = _IDLE
         self._actions = []
         self._index = 0
         self._wait_deadline = None
-        self._server_wait_deadline = None
         self._acked_sequence = None
         self._ack_error = None
-        self._servo_status = None          # GoalStatus once the result lands
-        self._servo_result = None
-        self._servo_goal_handle = None
-        self._servo_attempts = 0
+        self._dev_mode = False
 
         self._tick_timer = self.create_timer(0.1, self._tick)
 
@@ -89,7 +77,10 @@ class ForestExecutorNode(Node):
             self.get_logger().warn(f"Ignoring invalid area command JSON: {exc}")
             return
 
-        if payload.get("command") != "start" or payload.get("area") != "AREA_2":
+        command = payload.get("command")
+        is_start = command == "start" and payload.get("area") == "AREA_2"
+        is_dev = command == "dev_free_path"
+        if not (is_start or is_dev):
             return
 
         if self._state != _IDLE:
@@ -97,7 +88,10 @@ class ForestExecutorNode(Node):
                 "Forest task already running; ignoring duplicate start.")
             return
 
-        self._plan_forest_task(payload)
+        if is_dev:
+            self._plan_dev_free_path(payload)
+        else:
+            self._plan_forest_task(payload)
 
     def _ack_callback(self, msg: String):
         try:
@@ -120,15 +114,20 @@ class ForestExecutorNode(Node):
         except (KeyError, TypeError, ValueError) as exc:
             self._publish_status("error", f"Invalid Forest payload: {exc}")
             return
+        no_downward_pick = bool(payload.get("no_downward_pick", False))
 
         self.get_logger().info(
-            f"Planning Forest task: r1={r1_blocks}, r2={r2_blocks}, fake={fake_block}")
-        result = forest_path.plan(r1_blocks, r2_blocks, fake_block)
+            f"Planning Forest task: r1={r1_blocks}, r2={r2_blocks}, "
+            f"fake={fake_block}, no_downward_pick={no_downward_pick}")
+        result = forest_path.plan(r1_blocks, r2_blocks, fake_block,
+                                  no_downward_pick=no_downward_pick)
 
         if result["status"] == "impossible":
-            self._publish_status(
-                "impossible",
-                "No legal R2 Forest route, even if R1 clears all of its KFS.")
+            detail = "No legal R2 Forest route, even if R1 clears all of its KFS."
+            if no_downward_pick:
+                detail += (" NOTE: no_downward_pick is ON; the layout may be"
+                           " solvable with downward picks allowed.")
+            self._publish_status("impossible", detail)
             return
 
         route = result["route"]
@@ -143,6 +142,7 @@ class ForestExecutorNode(Node):
                 "needs_extra_r1_trip": result["needs_extra_r1_trip"],
                 "fallback_collect": result["fallback_collect"],
                 "want_used": result["want_used"],
+                "no_downward_pick": no_downward_pick,
                 "r2_collected": route["collected"],
                 "exit_block": route["exit_block"],
                 "positions": route["positions"],
@@ -154,8 +154,36 @@ class ForestExecutorNode(Node):
             self.get_logger().warn(
                 f"R1 must clear these blocks before/while R2 executes: {clear_set}")
 
+        self._begin(actions, dev_mode=False)
+
+    def _plan_dev_free_path(self, payload: dict):
+        """UPDATE.md A5: bench-test climb choreography along an operator
+        route — no picks, no rule checks, isolated from the competition
+        planner. Payload: {"command": "dev_free_path", "blocks": [2, 5, ...],
+        "descend_exit": bool}."""
+        try:
+            blocks = [int(b) for b in payload["blocks"]]
+            descend_exit = bool(payload.get("descend_exit", False))
+            actions = forest_path.dev_free_path_actions(
+                blocks, descend_exit=descend_exit)
+        except (KeyError, TypeError, ValueError) as exc:
+            self._publish_status("error", f"Invalid dev_free_path payload: {exc}")
+            return
+
+        self.get_logger().warn(
+            f"DEV FREE-PATH mode: route {blocks} (descend_exit={descend_exit}) "
+            f"— no picks, no rule checks, area_complete will NOT be signalled")
+        self._publish_status(
+            "dev_free_path_planned",
+            {"blocks": blocks, "descend_exit": descend_exit,
+             "action_count": len(actions)},
+        )
+        self._begin(actions, dev_mode=True)
+
+    def _begin(self, actions, dev_mode):
         self._actions = actions
         self._index = 0
+        self._dev_mode = dev_mode
         self._state = _DISPATCH
 
     @staticmethod
@@ -172,29 +200,25 @@ class ForestExecutorNode(Node):
             self._dispatch_next()
         elif self._state == _WAIT_ACK:
             self._check_ack()
-        elif self._state == _WAIT_SERVO:
-            self._check_servo()
 
     def _dispatch_next(self):
         if self._index >= len(self._actions):
             self._publish_status(
-                "complete", f"Executed {len(self._actions)} Forest actions.")
-            self._publish_area_complete()
+                "complete", f"Executed {len(self._actions)} Forest actions."
+                + (" (dev_free_path)" if self._dev_mode else ""))
+            if not self._dev_mode:
+                self._publish_area_complete()
             self._state = _IDLE
             return
 
         action, comment, meta = self._actions[self._index]
-        if action == 'VISUAL_SERVO_BLOCK':
-            self._servo_attempts = 0
-            self._start_servo(meta, comment)
-        else:
-            self._publish_teensy_command(
-                self._index + 1, len(self._actions), action, comment, meta)
-            self._acked_sequence = None
-            self._ack_error = None
-            self._wait_deadline = self.get_clock().now().nanoseconds / 1e9 \
-                + float(self.get_parameter('ack_timeout_s').value)
-            self._state = _WAIT_ACK
+        self._publish_teensy_command(
+            self._index + 1, len(self._actions), action, comment, meta)
+        self._acked_sequence = None
+        self._ack_error = None
+        self._wait_deadline = self.get_clock().now().nanoseconds / 1e9 \
+            + float(self.get_parameter('ack_timeout_s').value)
+        self._state = _WAIT_ACK
 
     def _check_ack(self):
         if self._acked_sequence == self._index + 1:
@@ -221,95 +245,7 @@ class ForestExecutorNode(Node):
         self._state = _IDLE
         self._actions = []
         self._index = 0
-
-    # ── Visual servo (AlignAndPick) ──────────────────────────────────────
-
-    def _start_servo(self, meta: dict, comment: str):
-        if not self._servo_client.server_is_ready():
-            # Same non-blocking rule as NavInterface: never wait_for_server()
-            # inside a timer callback. Retry next tick until the deadline.
-            if self._server_wait_deadline is None:
-                self._server_wait_deadline = \
-                    self.get_clock().now().nanoseconds / 1e9 + 10.0
-                self.get_logger().warn(
-                    "align_and_pick server not ready, waiting up to 10 s...")
-            elif self.get_clock().now().nanoseconds / 1e9 > self._server_wait_deadline:
-                self._server_wait_deadline = None
-                self._fail("align_and_pick action server unavailable")
-            return
-
-        self._server_wait_deadline = None
-        self._wait_deadline = self.get_clock().now().nanoseconds / 1e9 \
-            + float(self.get_parameter('servo_timeout_s').value)
-        self._servo_status = None
-        self._servo_result = None
-        self._servo_goal_handle = None
-        self._servo_attempts += 1
-
-        goal = AlignAndPick.Goal()
-        goal.block_id = int(meta.get('block', 0))
-        goal.block_height = _HEIGHT_ENUM.get(meta.get('height', 'A'),
-                                             AlignAndPick.Goal.HEIGHT_A)
-        self.get_logger().info(
-            f"Visual servo: {comment} (attempt {self._servo_attempts})")
-
-        future = self._servo_client.send_goal_async(
-            goal, feedback_callback=self._servo_feedback_callback)
-        future.add_done_callback(self._servo_goal_response)
-        self._state = _WAIT_SERVO
-
-    def _servo_feedback_callback(self, fb):
-        self.get_logger().info(
-            f"servo: {fb.feedback.state} "
-            f"offset={fb.feedback.current_offset_mm:.1f}mm",
-            throttle_duration_sec=1.0)
-
-    def _servo_goal_response(self, future):
-        handle = future.result()
-        if not handle.accepted:
-            self._servo_status = GoalStatus.STATUS_ABORTED
-            return
-        self._servo_goal_handle = handle
-        handle.get_result_async().add_done_callback(self._servo_result_callback)
-
-    def _servo_result_callback(self, future):
-        response = future.result()
-        self._servo_status = response.status
-        self._servo_result = response.result
-
-    def _check_servo(self):
-        if self._servo_status is not None:
-            success = (
-                self._servo_status == GoalStatus.STATUS_SUCCEEDED
-                and self._servo_result is not None
-                and self._servo_result.success
-            )
-            if success:
-                self.get_logger().info(
-                    "Visual servo aligned: final offset "
-                    f"{self._servo_result.final_offset_mm:.1f} mm")
-                self._advance()
-                return
-            detail = (self._servo_result.message
-                      if self._servo_result else f"status {self._servo_status}")
-            retries = int(self.get_parameter('servo_retries').value)
-            if self._servo_attempts <= retries:
-                self.get_logger().warn(
-                    f"Visual servo failed ({detail}); retrying...")
-                _action, comment, meta = self._actions[self._index]
-                self._start_servo(meta, comment)
-            else:
-                self._fail(f"Visual servo failed after "
-                           f"{self._servo_attempts} attempt(s): {detail}")
-            return
-
-        now_s = self.get_clock().now().nanoseconds / 1e9
-        if now_s > self._wait_deadline:
-            if self._servo_goal_handle is not None:
-                self._servo_goal_handle.cancel_goal_async()
-            self._fail(
-                f"Visual servo timed out after "
-                f"{self.get_parameter('servo_timeout_s').value}s")
+        self._dev_mode = False
 
     # ── Outbound ─────────────────────────────────────────────────────────
 
