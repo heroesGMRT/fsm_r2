@@ -28,6 +28,7 @@ class FSMNode(Node):
         self.r1_blocks = []
         self.r2_blocks = []
         self.fake_block = 0
+        self.no_downward_pick = False
         self.area_status = {}
         # One-shot guards so Area1State/Area2State only send their start
         # command once per arrival; reset on START/RESET/RETRY.
@@ -86,9 +87,12 @@ class FSMNode(Node):
 
     # ── Trigger methods (called by the dashboard UI) ──────────────────────────
 
-    def set_forest_state(self, r1_blocks, r2_blocks, fake_block):
+    def set_forest_state(self, r1_blocks, r2_blocks, fake_block,
+                         no_downward_pick=False):
         """Called by the dashboard once the operator types in the Forest
         state for Area 2 (3 R1 KFS blocks, 4 R2 KFS blocks, 1 Fake block).
+        ``no_downward_pick`` forwards the planner bench-safety toggle
+        (every KFS collected via an upward approach).
 
         Can be called any time before or during Area 2 -- Area2State will
         pick it up on its next tick and only fires the start command once
@@ -97,10 +101,27 @@ class FSMNode(Node):
         self.r1_blocks = list(r1_blocks)
         self.r2_blocks = list(r2_blocks)
         self.fake_block = int(fake_block)
+        self.no_downward_pick = bool(no_downward_pick)
         self.forest_triggered = False
         self.get_logger().info(
             f"Dashboard → Forest state set: r1={self.r1_blocks} "
-            f"r2={self.r2_blocks} fake={self.fake_block}"
+            f"r2={self.r2_blocks} fake={self.fake_block} "
+            f"no_downward_pick={self.no_downward_pick}"
+        )
+
+    def trigger_dev_free_path(self, blocks, descend_exit=False):
+        """Called by the dashboard: send a dev/free-path route straight to
+        the Forest executor (bench mode -- no picks, no rule checks, never
+        signals area_complete, so it cannot advance the mission FSM)."""
+        msg = String()
+        msg.data = json.dumps({
+            "command": "dev_free_path",
+            "blocks": [int(b) for b in blocks],
+            "descend_exit": bool(descend_exit),
+        })
+        self.area_cmd_pub.publish(msg)
+        self.get_logger().warn(
+            f"Dashboard → DEV FREE PATH: {msg.data}"
         )
 
     def trigger_start(self):
