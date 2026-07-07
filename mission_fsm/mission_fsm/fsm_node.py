@@ -4,7 +4,7 @@ import json
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Int32
 
 from .interfaces.nav_interface import NavInterface
 from .task.task_manager import TaskManager
@@ -49,6 +49,18 @@ class FSMNode(Node):
             10
         )
 
+        # Sequence instance
+        from .sequences.lift_cross_sequence import LiftCrossSequence
+        self._lift_cross_seq = LiftCrossSequence()
+
+        # Subscribe to incoming fsm commands (to easily call sequences)
+        self.create_subscription(
+            Int32,
+            '/fsm_command',
+            self._fsm_command_callback,
+            10
+        )
+
         # Outbound: tells area-specific executor nodes (e.g. the Forest
         # executor) to start their task. Payload is a JSON string so no
         # custom .msg is needed; each executor filters on "area".
@@ -73,6 +85,22 @@ class FSMNode(Node):
             self.area_complete = True
         else:
             self.get_logger().warn(f"Unknown signal received: '{signal}'")
+
+    def _fsm_command_callback(self, msg: Int32):
+        """Handle incoming FSM command integers.
+
+        Commands:
+            300 - Trigger the Lift-Cross sequence
+            99  - Emergency stop (resets sequence)
+        """
+        cmd = msg.data
+        if cmd == 300:
+            self.get_logger().info("Received FSM command 300: Starting Lift-Cross sequence.")
+            self._lift_cross_seq.start(self)
+        elif cmd == 99:
+            if self._lift_cross_seq.is_running():
+                self.get_logger().warn("Received FSM command 99 (Emergency Stop): Resetting Lift-Cross sequence.")
+                self._lift_cross_seq.reset()
 
     def _area_status_callback(self, msg: String):
         """Store the latest area-executor status for dashboard display."""
@@ -163,6 +191,8 @@ class FSMNode(Node):
 
     def loop(self):
         self.task.update()
+        if self._lift_cross_seq.is_running():
+            self._lift_cross_seq.tick(self)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

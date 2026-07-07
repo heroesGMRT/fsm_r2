@@ -36,6 +36,7 @@ setup(
             'teensy_command = mission_fsm.teensy_command_node:main',
             'climb_test = mission_fsm.climb_test_node:main',
             'keyboard_teleop = mission_fsm.keyboard_teleop_node:main',
+            'lift_cross_runner = mission_fsm.lift_cross_runner_node:main',
         ],
     },
 )
