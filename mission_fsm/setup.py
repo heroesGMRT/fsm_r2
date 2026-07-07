@@ -34,6 +34,7 @@ setup(
             'mock_nav_server = mission_fsm.mock_nav_server:main',
             'forest_executor = mission_fsm.forest_executor_node:main',
             'teensy_command = mission_fsm.teensy_command_node:main',
+            'climb_test = mission_fsm.climb_test_node:main',
             'keyboard_teleop = mission_fsm.keyboard_teleop_node:main',
         ],
     },
