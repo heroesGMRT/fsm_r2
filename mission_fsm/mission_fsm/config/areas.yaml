@@ -29,8 +29,7 @@ configs:
       yaw: -1.53451
 
   # EDIT ME -- currently a copy of config_1. Fill in your second
-  # starting position / field layout.
-  config_2:
+  
     area_1:
       x: 0.109317
       y: -3.94351

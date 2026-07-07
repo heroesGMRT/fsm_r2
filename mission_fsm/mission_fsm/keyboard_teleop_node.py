@@ -1,8 +1,11 @@
-"""Keyboard teleop node for publishing FSM integer commands.
+"""Keyboard teleop node for publishing FSM integer commands and cmd_vel.
 
-Publishes ``std_msgs/msg/Int32`` messages to ``/fsm_command`` so operators can
-test micro-ROS command handling from a terminal without typing ``ros2 topic
-pub`` repeatedly.
+Publishes:
+  - std_msgs/msg/Int32      -> /fsm_command  (FSM integer commands)
+  - geometry_msgs/msg/Twist -> /cmd_vel      (arrow-key velocity control)
+
+Run with:
+  ros2 run mission_fsm keyboard_teleop_node
 """
 
 from __future__ import annotations
@@ -16,276 +19,366 @@ import tty
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32
+from geometry_msgs.msg import Twist
 
 
-TOPIC_NAME = "/fsm_command"
-MAX_ANGLE = 300
-SERVO_STEP = 5
-SYNC_STEP = 5
+TOPIC_FSM     = "/fsm_command"
+TOPIC_VEL     = "/cmd_vel"
+MAX_ANGLE     = 300
+SERVO_STEP    = 5
+SYNC_STEP     = 5
+LINEAR_SPEED  = 0.3   # m/s
+ANGULAR_SPEED = 0.8   # rad/s
 
 
-HOTKEYS = {
-    "q": (None, "Quit"),
-    "i": (None, "Enter an exact integer command"),
-    "r": (20, "Odometry re-zero"),
-    "x": (99, "Emergency stop toggle"),
-    "a": (40, "Start autonomous drive sequence"),
-    "m": (201, "Chassis Macro M"),
-    "n": (202, "Chassis Macro N"),
-    "1": (51, "Arm sequence S1"),
-    "2": (52, "Arm sequence S2"),
-    "3": (53, "Arm sequence S3"),
-    "4": (54, "Arm sequence S4"),
-    "5": (55, "Arm sequence S5"),
-    "6": (56, "Arm sequence S6"),
-    "t": (100, "Front lift up sequence"),
-    "y": (101, "Back lift up sequence"),
-    "g": (102, "Front lift down sequence"),
-    "h": (103, "Back lift down sequence"),
-    "u": (104, "Both lifts up sequence"),
-    "j": (105, "Both lifts down sequence"),
-    "T": (110, "Front lift up timed"),
-    "Y": (111, "Back lift up timed"),
-    "G": (112, "Front lift down timed"),
-    "H": (113, "Back lift down timed"),
-    "U": (114, "Both lifts up timed"),
-    "J": (115, "Both lifts down timed"),
-    "s": (60, "M5 stop"),
-    "w": (61, "M5 CW"),
-    "e": (62, "M5 CCW"),
-    "d": (70, "M6 stop"),
-    "f": (71, "M6 CW"),
-    "c": (72, "M6 CCW"),
-    "z": (4000, "Front DC lift stop"),
-    "v": (4001, "Front DC lift up"),
-    "b": (4002, "Front DC lift down"),
-    "Z": (4010, "Back DC lift stop"),
-    "V": (4011, "Back DC lift up"),
-    "B": (4012, "Back DC lift down"),
-    "[": (4020, "Front lift pneumatic release"),
-    "]": (4021, "Front lift pneumatic deploy"),
-    ";": (4030, "Back lift pneumatic release"),
-    "'": (4031, "Back lift pneumatic deploy"),
-    "7": (10, "Front base pneumatic high"),
-    "8": (11, "Front base pneumatic low"),
-    "9": (12, "Back base pneumatic high"),
-    "0": (13, "Back base pneumatic low"),
-    "-": (14, "Both base pneumatics high"),
-    "=": (15, "Both base pneumatics low"),
-    "o": (30, "Base servo preset 10"),
-    "p": (31, "Base servo preset 20"),
-    "k": (32, "Base servo preset 30"),
-    "l": (33, "Base servo preset 40"),
-    "/": (34, "Base servo preset 90"),
+# key -> (fsm_command_int_or_None, description)
+HOTKEYS: dict[str, tuple[int | None, str]] = {
+    # ── System ────────────────────────────────────────────────────────────────
+    "r": (20,   "Odometry re-zero  — reset odom x/y/θ → 0.0"),
+    "x": (99,   "Emergency stop toggle  — kill M5/M6 & reset sequence"),
+
+    # ── Autonomous / Chassis macros ───────────────────────────────────────────
+    "a": (40,   "Start autonomous drive sequence"),
+    "m": (201,  "Chassis Macro M  (odom-based position sequence)"),
+    "n": (202,  "Chassis Macro N  (odom-based position sequence)"),
+    "P": (300,  "Lift-cross sequence  (lift up → fwd → front down → fwd → back down → fwd again)"),
+
+    # ── Arm sequences S1-S6 (safe: only runs when robot is IDLE) ─────────────
+    "1": (51,   "Arm Sequence S1  [safe — runs only when IDLE]"),
+    "2": (52,   "Arm Sequence S2  [safe — runs only when IDLE]"),
+    "3": (53,   "Arm Sequence S3  [safe — runs only when IDLE]"),
+    "4": (54,   "Arm Sequence S4  [safe — runs only when IDLE]"),
+    "5": (55,   "Arm Sequence S5  [safe — runs only when IDLE]"),
+    "6": (56,   "Arm Sequence S6  [safe — runs only when IDLE]"),
+
+    # ── Lift sequences — encoder / limit-switch based ─────────────────────────
+    "t": (100,  "Front lift UP    (encoder/limit-switch sequence)"),
+    "y": (101,  "Back lift UP     (encoder/limit-switch sequence)"),
+    "g": (102,  "Front lift DOWN  (encoder/limit-switch sequence)"),
+    "h": (103,  "Back lift DOWN   (encoder/limit-switch sequence)"),
+    "u": (104,  "BOTH lifts UP    (encoder/limit-switch sequence)"),
+    "j": (105,  "BOTH lifts DOWN  (encoder/limit-switch sequence)"),
+
+    # ── Lift sequences — timed fallback ──────────────────────────────────────
+    "T": (110,  "Front lift UP    (timed fallback sequence)"),
+    "Y": (111,  "Back lift UP     (timed fallback sequence)"),
+    "G": (112,  "Front lift DOWN  (timed fallback sequence)"),
+    "H": (113,  "Back lift DOWN   (timed fallback sequence)"),
+    "U": (114,  "BOTH lifts UP    (timed fallback sequence)"),
+    "J": (115,  "BOTH lifts DOWN  (timed fallback sequence)"),
+
+    # ── M5 — arm lift motor ───────────────────────────────────────────────────
+    "s": (60,   "M5 STOP"),
+    "w": (61,   "M5 Rotate CW"),
+    "e": (62,   "M5 Rotate CCW"),
+
+    # ── M6 — gripper spin motor ───────────────────────────────────────────────
+    "d": (70,   "M6 STOP"),
+    "f": (71,   "M6 Rotate CW"),
+    "c": (72,   "M6 Rotate CCW"),
+
+    # ── DC lift motors ────────────────────────────────────────────────────────
+    "z": (4000, "Front DC Lift  STOP"),
+    "v": (4001, "Front DC Lift  RAISE"),
+    "b": (4002, "Front DC Lift  LOWER"),
+    "Z": (4010, "Back DC Lift   STOP"),
+    "V": (4011, "Back DC Lift   RAISE"),
+    "B": (4012, "Back DC Lift   LOWER"),
+
+    # ── Pneumatics ────────────────────────────────────────────────────────────
+    "[": (4020, "Front lift pneumatic  RELEASE"),
+    "]": (4021, "Front lift pneumatic  DEPLOY"),
+    ";": (4030, "Back lift pneumatic   RELEASE"),
+    "'": (4031, "Back lift pneumatic   DEPLOY"),
+    "7": (10,   "Front base pneumatic  HIGH"),
+    "8": (11,   "Front base pneumatic  LOW"),
+    "9": (12,   "Back base pneumatic   HIGH"),
+    "0": (13,   "Back base pneumatic   LOW"),
+    "-": (14,   "BOTH base pneumatics  HIGH"),
+    "=": (15,   "BOTH base pneumatics  LOW"),
+
+    # ── Base servo presets ────────────────────────────────────────────────────
+    "o": (30,   "Base servo preset → state 10"),
+    "p": (31,   "Base servo preset → state 20"),
+    "k": (32,   "Base servo preset → state 30"),
+    "l": (33,   "Base servo preset → state 40"),
+    "/": (34,   "Base servo preset → state 90"),
 }
 
 
-HELP_TEXT = """
-FSM Keyboard Teleop
-Topic: /fsm_command
-Message type: std_msgs/msg/Int32
-
-Common hotkeys
-  r  -> 20    odometry re-zero
-  x  -> 99    emergency stop
-  a  -> 40    autonomous drive
-  m  -> 201   chassis macro M
-  n  -> 202   chassis macro N
-
-Arm sequences
-  1..6 -> 51..56
-
-Lift sequences
-  t/y/g/h/u/j -> 100/101/102/103/104/105
-  T/Y/G/H/U/J -> 110/111/112/113/114/115
-
-Manual overrides
-  M5: s/w/e -> 60/61/62
-  M6: d/f/c -> 70/71/72
-  Front DC lift: z/v/b -> 4000/4001/4002
-  Back  DC lift: Z/V/B -> 4010/4011/4012
-
-Pneumatics
-  [/ ] -> 4020 / 4021   front lift release / deploy
-  ;/ ' -> 4030 / 4031   back lift release / deploy
-  7/8  -> 10 / 11       front base high / low
-  9/0  -> 12 / 13       back base high / low
-  -/=  -> 14 / 15       both base high / low
-
-Base servo presets
-  o/p/k/l// -> 30/31/32/33/34
-
-Dynamic servo angles
-  , and .   decrease/increase ASME angle by 5 deg, publish 1000 + angle
-  < and >   decrease/increase sync angle by 5 deg, publish 2000 + angle
-
-Exact integer mode
-  i         type any integer command, then press Enter
-
-Other
-  ?         show help
-  q         quit
+HELP_TEXT = """\
+╔══════════════════════════════════════════════════════════════════════════════╗
+║           FSM Keyboard Teleop — /fsm_command (Int32) & /cmd_vel (Twist)     ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  SYSTEM CONTROL                                                              ║
+║    r → 20    Odometry re-zero  (reset odom x/y/θ → 0.0)                    ║
+║    x → 99    Emergency stop toggle  (kills M5/M6, resets sequence)          ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  AUTONOMOUS / CHASSIS MACROS                                                 ║
+║    a → 40    Start autonomous drive sequence                                 ║
+║    m → 201   Chassis Macro M  (odom-based position sequence)                ║
+║    n → 202   Chassis Macro N  (odom-based position sequence)                ║
+║    P → 300   Lift-cross sequence (lift↑ → fwd → front↓ → fwd → back↓ → fwd)  ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  ARM SEQUENCES  [safe — only runs when robot is IDLE]                        ║
+║    1 → 51    Arm Sequence S1                                                 ║
+║    2 → 52    Arm Sequence S2                                                 ║
+║    3 → 53    Arm Sequence S3                                                 ║
+║    4 → 54    Arm Sequence S4                                                 ║
+║    5 → 55    Arm Sequence S5                                                 ║
+║    6 → 56    Arm Sequence S6                                                 ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  LIFT SEQUENCES — Encoder / Limit-switch based                               ║
+║    t → 100   Front lift UP                                                   ║
+║    y → 101   Back lift UP                                                    ║
+║    g → 102   Front lift DOWN (retract)                                       ║
+║    h → 103   Back lift DOWN  (retract)                                       ║
+║    u → 104   BOTH lifts UP                                                   ║
+║    j → 105   BOTH lifts DOWN                                                 ║
+║  LIFT SEQUENCES — Timed fallback                                              ║
+║    T → 110   Front lift UP   (timed)                                         ║
+║    Y → 111   Back lift UP    (timed)                                         ║
+║    G → 112   Front lift DOWN (timed)                                         ║
+║    H → 113   Back lift DOWN  (timed)                                         ║
+║    U → 114   BOTH lifts UP   (timed)                                         ║
+║    J → 115   BOTH lifts DOWN (timed)                                         ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  MANUAL MOTOR OVERRIDES                                                      ║
+║    M5 (arm lift motor)     s→60 STOP  | w→61 CW  | e→62 CCW                ║
+║    M6 (gripper spin)       d→70 STOP  | f→71 CW  | c→72 CCW                ║
+║    Front DC lift           z→4000 STOP | v→4001 UP | b→4002 DOWN            ║
+║    Back DC lift            Z→4010 STOP | V→4011 UP | B→4012 DOWN            ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  PNEUMATICS                                                                  ║
+║    [ → 4020  Front lift pneumatic RELEASE                                   ║
+║    ] → 4021  Front lift pneumatic DEPLOY                                    ║
+║    ; → 4030  Back lift pneumatic RELEASE                                    ║
+║    ' → 4031  Back lift pneumatic DEPLOY                                     ║
+║    7 → 10    Front base pneumatic HIGH                                       ║
+║    8 → 11    Front base pneumatic LOW                                        ║
+║    9 → 12    Back base pneumatic HIGH                                        ║
+║    0 → 13    Back base pneumatic LOW                                         ║
+║    - → 14    BOTH base pneumatics HIGH                                       ║
+║    = → 15    BOTH base pneumatics LOW                                        ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  BASE SERVO PRESETS                                                          ║
+║    o→30 (st.10) | p→31 (st.20) | k→32 (st.30) | l→33 (st.40) | /→34(90)  ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  DYNAMIC ASME SERVO  (publishes 1000 + angle, range 0°-300°)                ║
+║    ,  decrease angle by 5°        .  increase angle by 5°                   ║
+║  SYNC TRACKING SERVO (publishes 2000 + angle, range 0°-300°)                ║
+║    <  decrease angle by 5°        >  increase angle by 5°                   ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  CMD_VEL (arrow keys)                                                        ║
+║    ↑  Forward  (+linear.x)        ↓  Backward (-linear.x)                  ║
+║    ←  Turn left (+angular.z)      →  Turn right (-angular.z)               ║
+║    SPACE  Stop (zero twist)                                                  ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║  OTHER                                                                       ║
+║    i   Enter exact integer command, then press Enter  (ESC cancels)         ║
+║    ?   Show this help                                                        ║
+║    q   Quit                                                                  ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
 
 class KeyboardTeleopNode(Node):
-    """Publish integer FSM commands from keyboard input."""
+    """Publish integer FSM commands and Twist velocities from keyboard input."""
+
+    # ANSI escape prefix (sent by arrow keys)
+    _ARROW_ESCAPE = "\x1b["
 
     def __init__(self):
         super().__init__("fsm_keyboard_teleop")
-        self._publisher = self.create_publisher(Int32, TOPIC_NAME, 10)
-        self._stdin_fd = sys.stdin.fileno()
-        self._old_term_settings = termios.tcgetattr(self._stdin_fd)
-        self._line_mode = False
-        self._numeric_buffer = ""
-        self._servo_angle = 0
-        self._sync_angle = 0
+        self._pub_fsm = self.create_publisher(Int32, TOPIC_FSM, 10)
+        self._pub_vel = self.create_publisher(Twist, TOPIC_VEL, 10)
 
+        self._stdin_fd = sys.stdin.fileno()
+        self._old_term = termios.tcgetattr(self._stdin_fd)
         tty.setcbreak(self._stdin_fd)
-        self.create_timer(0.05, self._poll_keyboard)
+
+        self._line_mode = False
+        self._numeric_buf = ""
+        self._servo_angle = 0
+        self._sync_angle  = 0
+
+        # arrow-key multi-byte reader state
+        self._esc_buf = ""
+
+        self.create_timer(0.02, self._poll_keyboard)
 
         self.get_logger().info(
-            f"Keyboard teleop ready. Publishing Int32 commands on {TOPIC_NAME}"
+            f"Keyboard teleop ready — FSM: {TOPIC_FSM}  VEL: {TOPIC_VEL}"
         )
         print(HELP_TEXT)
-        print("Current ASME angle: 0 deg (command 1000)")
-        print("Current sync angle: 0 deg (command 2000)")
-        print("Waiting for keypresses...")
+        print(f"ASME angle: {self._servo_angle}°  (cmd {1000+self._servo_angle})")
+        print(f"Sync angle: {self._sync_angle}°  (cmd {2000+self._sync_angle})")
+        print("Waiting for keypresses…  (? for help, q to quit)\n")
         sys.stdout.flush()
+
+    # ── lifecycle ──────────────────────────────────────────────────────────────
 
     def destroy_node(self):
         self._restore_terminal()
         return super().destroy_node()
 
     def _restore_terminal(self):
-        if self._old_term_settings is not None:
-            termios.tcsetattr(
-                self._stdin_fd,
-                termios.TCSADRAIN,
-                self._old_term_settings,
-            )
-            self._old_term_settings = None
+        if self._old_term is not None:
+            termios.tcsetattr(self._stdin_fd, termios.TCSADRAIN, self._old_term)
+            self._old_term = None
+
+    # ── keyboard polling ───────────────────────────────────────────────────────
 
     def _poll_keyboard(self):
-        if not self._stdin_ready():
-            return
+        while self._stdin_ready():
+            ch = os.read(self._stdin_fd, 1).decode(errors="ignore")
+            if not ch:
+                return
+            self._process_char(ch)
 
-        key = os.read(self._stdin_fd, 1).decode(errors="ignore")
-        if not key:
+    def _stdin_ready(self) -> bool:
+        r, _, _ = select.select([sys.stdin], [], [], 0.0)
+        return bool(r)
+
+    def _process_char(self, ch: str):
+        # ── collect ANSI escape sequences (arrow keys) ─────────────────────
+        if self._esc_buf or ch == "\x1b":
+            self._esc_buf += ch
+            # wait for a letter to terminate the sequence
+            if len(self._esc_buf) >= 3:
+                seq = self._esc_buf
+                self._esc_buf = ""
+                self._handle_escape(seq)
             return
 
         if self._line_mode:
-            self._handle_numeric_mode_key(key)
+            self._handle_numeric_key(ch)
             return
 
-        if key == ",":
-            self._adjust_servo_angle(-SERVO_STEP)
+        # ── space → stop vel ───────────────────────────────────────────────
+        if ch == " ":
+            self._publish_vel(0.0, 0.0, "STOP cmd_vel")
             return
-        if key == ".":
-            self._adjust_servo_angle(SERVO_STEP)
+
+        # ── dynamic servo adjust ───────────────────────────────────────────
+        if ch == ",":
+            self._servo_angle = max(0, self._servo_angle - SERVO_STEP)
+            self._publish_fsm(1000 + self._servo_angle,
+                              f"ASME servo → {self._servo_angle}°")
             return
-        if key == "<":
-            self._adjust_sync_angle(-SYNC_STEP)
+        if ch == ".":
+            self._servo_angle = min(MAX_ANGLE, self._servo_angle + SERVO_STEP)
+            self._publish_fsm(1000 + self._servo_angle,
+                              f"ASME servo → {self._servo_angle}°")
             return
-        if key == ">":
-            self._adjust_sync_angle(SYNC_STEP)
+        if ch == "<":
+            self._sync_angle = max(0, self._sync_angle - SYNC_STEP)
+            self._publish_fsm(2000 + self._sync_angle,
+                              f"Sync angle → {self._sync_angle}°")
             return
-        if key == "i":
+        if ch == ">":
+            self._sync_angle = min(MAX_ANGLE, self._sync_angle + SYNC_STEP)
+            self._publish_fsm(2000 + self._sync_angle,
+                              f"Sync angle → {self._sync_angle}°")
+            return
+
+        # ── meta keys ──────────────────────────────────────────────────────
+        if ch == "i":
             self._enter_numeric_mode()
             return
-        if key == "?":
+        if ch == "?":
             print(HELP_TEXT)
             sys.stdout.flush()
             return
-        if key == "q":
-            self.get_logger().info("Quit requested from keyboard.")
+        if ch == "q":
+            self.get_logger().info("Quit requested.")
             raise KeyboardInterrupt
 
-        command_entry = HOTKEYS.get(key)
-        if command_entry is None:
-            printable = repr(key)
-            print(f"Unknown key {printable}. Press ? for help.")
+        # ── hotkeys ────────────────────────────────────────────────────────
+        entry = HOTKEYS.get(ch)
+        if entry is None:
+            print(f"Unknown key {ch!r}.  Press ? for help.")
             sys.stdout.flush()
             return
+        cmd, label = entry
+        self._publish_fsm(cmd, label)
 
-        command, label = command_entry
-        if command is None:
-            print(f"Key {key!r}: {label}")
-            sys.stdout.flush()
-            return
-        self._publish_command(command, label)
+    def _handle_escape(self, seq: str):
+        """Decode ANSI arrow key sequences → cmd_vel."""
+        mapping = {
+            "\x1b[A": (LINEAR_SPEED,   0.0,           "FORWARD"),
+            "\x1b[B": (-LINEAR_SPEED,  0.0,           "BACKWARD"),
+            "\x1b[D": (0.0,            ANGULAR_SPEED, "TURN LEFT"),
+            "\x1b[C": (0.0,           -ANGULAR_SPEED, "TURN RIGHT"),
+        }
+        vel = mapping.get(seq)
+        if vel:
+            lin, ang, label = vel
+            self._publish_vel(lin, ang, label)
+        # else: unknown escape sequence — silently ignore
 
-    def _stdin_ready(self) -> bool:
-        readable, _, _ = select.select([sys.stdin], [], [], 0.0)
-        return bool(readable)
+    # ── numeric input mode ────────────────────────────────────────────────────
 
     def _enter_numeric_mode(self):
         self._line_mode = True
-        self._numeric_buffer = ""
-        print("\nExact integer mode. Type a command and press Enter. Esc cancels.")
+        self._numeric_buf = ""
+        print("\nExact integer mode — type a number and press Enter  (ESC cancels)")
         print("> ", end="", flush=True)
 
-    def _handle_numeric_mode_key(self, key: str):
-        if key in ("\r", "\n"):
+    def _handle_numeric_key(self, ch: str):
+        if ch in ("\r", "\n"):
             print()
-            self._submit_numeric_buffer()
+            self._submit_numeric()
             return
-        if key == "\x1b":
-            print("\nCanceled exact integer mode.")
+        if ch == "\x1b":
+            print("\nCancelled.")
             self._line_mode = False
-            self._numeric_buffer = ""
+            self._numeric_buf = ""
             sys.stdout.flush()
             return
-        if key in ("\x7f", "\b"):
-            if self._numeric_buffer:
-                self._numeric_buffer = self._numeric_buffer[:-1]
+        if ch in ("\x7f", "\b"):
+            if self._numeric_buf:
+                self._numeric_buf = self._numeric_buf[:-1]
                 print("\b \b", end="", flush=True)
             return
-        if key.isdigit() or (key == "-" and not self._numeric_buffer):
-            self._numeric_buffer += key
-            print(key, end="", flush=True)
-            return
+        if ch.isdigit() or (ch == "-" and not self._numeric_buf):
+            self._numeric_buf += ch
+            print(ch, end="", flush=True)
 
-    def _submit_numeric_buffer(self):
-        raw = self._numeric_buffer.strip()
+    def _submit_numeric(self):
+        raw = self._numeric_buf.strip()
         self._line_mode = False
-        self._numeric_buffer = ""
-
+        self._numeric_buf = ""
         if not raw:
             print("No command entered.")
             sys.stdout.flush()
             return
-
         try:
-            command = int(raw)
+            cmd = int(raw)
         except ValueError:
-            print(f"Invalid integer: {raw}")
+            print(f"Invalid integer: {raw!r}")
             sys.stdout.flush()
             return
+        self._publish_fsm(cmd, "Exact integer input")
 
-        self._publish_command(command, "Exact integer input")
+    # ── publishers ────────────────────────────────────────────────────────────
 
-    def _adjust_servo_angle(self, delta: int):
-        self._servo_angle = min(MAX_ANGLE, max(0, self._servo_angle + delta))
-        self._publish_command(
-            1000 + self._servo_angle,
-            f"ASME servo angle -> {self._servo_angle} deg",
-        )
-
-    def _adjust_sync_angle(self, delta: int):
-        self._sync_angle = min(MAX_ANGLE, max(0, self._sync_angle + delta))
-        self._publish_command(
-            2000 + self._sync_angle,
-            f"Sync angle -> {self._sync_angle} deg",
-        )
-
-    def _publish_command(self, command: int, label: str):
+    def _publish_fsm(self, command: int, label: str):
         msg = Int32()
         msg.data = command
-        self._publisher.publish(msg)
-        print(f"Published {command}: {label}")
+        self._pub_fsm.publish(msg)
+        print(f"[FSM]  {command:>5}  {label}")
         sys.stdout.flush()
-        self.get_logger().info(f"Published command {command} ({label})")
+        self.get_logger().info(f"FSM cmd {command} ({label})")
+
+    def _publish_vel(self, lin: float, ang: float, label: str):
+        msg = Twist()
+        msg.linear.x  = lin
+        msg.angular.z = ang
+        self._pub_vel.publish(msg)
+        print(f"[VEL]  lin={lin:+.2f}  ang={ang:+.2f}  {label}")
+        sys.stdout.flush()
+        self.get_logger().info(f"Twist lin={lin} ang={ang} ({label})")
 
 
 def main(args=None):
