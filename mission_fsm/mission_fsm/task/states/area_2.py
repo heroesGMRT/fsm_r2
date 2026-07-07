@@ -67,6 +67,7 @@ class Area2State(BaseState):
             "r1_blocks": node.r1_blocks,
             "r2_blocks": node.r2_blocks,
             "fake_block": node.fake_block,
+            "no_downward_pick": bool(getattr(node, "no_downward_pick", False)),
         })
         node.area_cmd_pub.publish(msg)
         node.get_logger().info(f"Area 2: sent Forest start command: {msg.data}")

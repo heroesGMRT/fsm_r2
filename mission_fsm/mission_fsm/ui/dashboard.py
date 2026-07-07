@@ -220,6 +220,18 @@ class RobotDashboard:
             ent.pack(side=tk.LEFT, padx=8)
             self._forest_entries[key] = var
 
+        # Planner bench-safety toggle: forbid downward picks (every KFS
+        # collected via an upward approach). Forwarded through
+        # set_forest_state() -> Area2State payload -> planner.
+        self._no_down_pick = tk.BooleanVar(value=False)
+        tk.Checkbutton(card,
+                       text="no_downward_pick (bench safety: upward picks only)",
+                       variable=self._no_down_pick,
+                       bg=BG_PANEL, fg=TEXT_DIM, selectcolor=BG_CARD,
+                       activebackground=BG_PANEL, activeforeground=TEXT_WHITE,
+                       font=("Arial", 9), anchor=tk.W,
+                       ).pack(fill=tk.X, pady=(4, 0))
+
         btn_row = tk.Frame(card, bg=BG_PANEL)
         btn_row.pack(fill=tk.X, pady=(10, 0))
 
@@ -244,7 +256,48 @@ class RobotDashboard:
                                            justify=tk.LEFT, anchor=tk.W)
         self.lbl_forest_current.pack(anchor=tk.W)
 
+        self._build_dev_free_path_card(parent)
         self._build_area2_status(parent)
+
+    def _build_dev_free_path_card(self, parent):
+        """Bench-only card: send an operator block route straight to the
+        Forest executor (dev_free_path -- climbs only, no picks, no rule
+        checks, never advances the mission FSM)."""
+        card = tk.Frame(parent, bg=BG_PANEL, padx=16, pady=10,
+                        highlightbackground=ORANGE, highlightthickness=1)
+        card.pack(fill=tk.X, pady=(12, 0))
+
+        tk.Label(card, text="DEV FREE PATH (bench only — climbs, no picks)",
+                 font=("Arial", 9, "bold"), bg=BG_PANEL, fg=ORANGE
+                 ).pack(anchor=tk.W)
+
+        row = tk.Frame(card, bg=BG_PANEL)
+        row.pack(fill=tk.X, pady=(6, 0))
+
+        tk.Label(row, text="Route (adjacent blocks — e.g. 2 5 8 11)",
+                 font=("Arial", 9), bg=BG_PANEL, fg=TEXT_DIM,
+                 width=38, anchor=tk.W).pack(side=tk.LEFT)
+
+        self._dev_route_var = tk.StringVar(value="")
+        tk.Entry(row, textvariable=self._dev_route_var, width=16,
+                 bg=BG_CARD, fg=TEXT_WHITE, insertbackground=TEXT_WHITE,
+                 relief=tk.FLAT, font=self._mono).pack(side=tk.LEFT, padx=8)
+
+        opts = tk.Frame(card, bg=BG_PANEL)
+        opts.pack(fill=tk.X, pady=(4, 0))
+
+        self._dev_descend = tk.BooleanVar(value=False)
+        tk.Checkbutton(opts, text="descend to Pathway at the end",
+                       variable=self._dev_descend,
+                       bg=BG_PANEL, fg=TEXT_DIM, selectcolor=BG_CARD,
+                       activebackground=BG_PANEL, activeforeground=TEXT_WHITE,
+                       font=("Arial", 9)).pack(side=tk.LEFT)
+
+        tk.Button(opts, text="RUN DEV ROUTE",
+                  bg=ORANGE, fg=BG_DARK, font=self._bold,
+                  width=16, height=1, relief=tk.FLAT,
+                  cursor="hand2", command=self._on_dev_free_path
+                  ).pack(side=tk.RIGHT)
 
     def _build_area2_status(self, parent):
         status_card = tk.Frame(parent, bg=BG_PANEL, padx=16, pady=12,
@@ -357,13 +410,41 @@ class RobotDashboard:
             )
             return
 
-        self.fsm.set_forest_state(r1, r2, fake)
+        ndp = bool(self._no_down_pick.get())
+        self.fsm.set_forest_state(r1, r2, fake, no_downward_pick=ndp)
 
         self.lbl_forest_msg.config(
-            text=f"Set! R1={r1}  R2={r2}  Fake={fake}",
+            text=f"Set! R1={r1}  R2={r2}  Fake={fake}"
+                 + ("  [no downward picks]" if ndp else ""),
             fg=GREEN,
         )
         self.window.after(4000, lambda: self.lbl_forest_msg.config(text=""))
+
+    def _on_dev_free_path(self):
+        """Validate the dev route and send it to the Forest executor."""
+        raw = self._dev_route_var.get().replace(",", " ").split()
+        try:
+            blocks = [int(x) for x in raw]
+        except ValueError:
+            messagebox.showerror("Invalid dev route",
+                                 "Block numbers must be integers.")
+            return
+        if not blocks:
+            messagebox.showerror("Invalid dev route",
+                                 "Enter at least one block (1-12).")
+            return
+        if any(b < 1 or b > 12 for b in blocks):
+            messagebox.showerror("Invalid dev route",
+                                 "Block numbers must be between 1 and 12.")
+            return
+        if not messagebox.askokcancel(
+                "DEV FREE PATH",
+                f"Send BENCH route {blocks} to the Forest executor?\n\n"
+                "No picks, no rule checks. The executor rejects non-adjacent "
+                "consecutive blocks. Make sure the robot is positioned on the "
+                "Pathway in front of the first block."):
+            return
+        self.fsm.trigger_dev_free_path(blocks, self._dev_descend.get())
 
     # ── Periodic refresh ──────────────────────────────────────────────────────
 
@@ -381,7 +462,10 @@ class RobotDashboard:
         r2 = getattr(self.fsm, "r2_blocks", [])
         fake = getattr(self.fsm, "fake_block", 0)
         if r1 or r2 or fake:
-            self.lbl_forest_current.config(text=f"R1={r1}  R2={r2}  Fake={fake}")
+            ndp = "  [no downward picks]" if getattr(
+                self.fsm, "no_downward_pick", False) else ""
+            self.lbl_forest_current.config(
+                text=f"R1={r1}  R2={r2}  Fake={fake}{ndp}")
         else:
             self.lbl_forest_current.config(text="(nothing set yet)")
 
@@ -410,6 +494,7 @@ class RobotDashboard:
         detail = payload.get("detail", "")
         color = {
             "planned": BLUE,
+            "dev_free_path_planned": ORANGE,
             "complete": GREEN,
             "error": ACCENT_1,
             "impossible": ACCENT_1,
@@ -423,6 +508,14 @@ class RobotDashboard:
     @staticmethod
     def _format_area2_status(status: str, detail) -> str:
         if isinstance(detail, dict):
+            if status == "dev_free_path_planned":
+                return "\n".join([
+                    f"Status       : {status}  (BENCH MODE)",
+                    f"Dev route    : {detail.get('blocks', [])}",
+                    f"Descend exit : {detail.get('descend_exit', False)}",
+                    f"Actions      : {detail.get('action_count', '-')}",
+                    "Note         : no picks; area_complete NOT signalled",
+                ])
             lines = [
                 f"Status       : {status}",
                 f"Plan status  : {detail.get('status', '-')}",
@@ -432,6 +525,8 @@ class RobotDashboard:
                 f"Foot path    : {detail.get('positions', [])}",
                 f"Actions      : {detail.get('action_count', '-')}",
             ]
+            if detail.get("no_downward_pick"):
+                lines.append("Pick mode    : no downward picks (upward only)")
             if detail.get("fallback_collect"):
                 lines.append(f"Fallback     : collecting {detail.get('want_used')} block(s)")
             if detail.get("needs_extra_r1_trip"):
