@@ -13,6 +13,11 @@
 #
 #  area_1.move_x / move_y : /relative_move Vector3 x/y values
 #  area_1.move_wait_sec   : seconds to wait before transitioning
+#
+#  area_2.retry_move_x/y  : /relative_move sent ONLY when the
+#                           RETRY button is pressed for Area 2,
+#                           before nav to the area_2 goal fires.
+#  area_2.retry_move_wait_sec : seconds to hold that move.
 # ============================================================
 
 active_config: config_1
@@ -20,13 +25,16 @@ active_config: config_1
 configs:
   config_1:
     area_1:
-      move_x: -0.67 #six seven
-      move_y:  0.8
+      move_x: -0.8 #six seven
+      move_y:  0.4
       move_wait_sec: 3.0
     area_2:
       x: 1.54719
       y: -2.16271
       yaw: -0.00435559
+      retry_move_x: 0.0   # tune me — metres forward on retry
+      retry_move_y: 0.0   # tune me — metres lateral on retry
+      retry_move_wait_sec: 2.0
     area_3:
       x: 9.764
       y: -3.31727
@@ -34,13 +42,16 @@ configs:
 
   config_2:
     area_1:
-      move_x: -0.67    # edit me
-      move_y:  -0.8    # edit me
+      move_x: -0.8    # edit me
+      move_y:  -0.0    # edit me
       move_wait_sec: 3.0
-    area_2:
+    area_2:sd
       x: 1.54719
       y: -2.16271
       yaw: -0.00435559
+      retry_move_x: 0.0   # tune me — metres forward on retry
+      retry_move_y: 0.0   # tune me — metres lateral on retry
+      retry_move_wait_sec: 2.0
     area_3:
       x: 9.764
       y: -3.31727

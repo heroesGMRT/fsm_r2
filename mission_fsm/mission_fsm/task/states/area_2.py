@@ -3,6 +3,7 @@
 import json
 
 from action_msgs.msg import GoalStatus
+from geometry_msgs.msg import Vector3
 from std_msgs.msg import String
 
 from ..base_state import BaseState
@@ -17,8 +18,17 @@ _GOAL = AREA_GOALS["area_2"]   # {x, y, yaw}
 class Area2State(BaseState):
     """Handles all robot behaviour for Area 2 (the Forest task).
 
+    On a normal mission entry, the state goes directly to nav.
+
+    On a RETRY (triggered by the dashboard Retry button):
+      Phase R0: publish /relative_move (values from areas.yaml
+                area_2.retry_move_x/y/wait_sec) and wait for the
+                timer to expire.  This lets the robot reposition
+                itself before nav takes over.
+      Phase R1 onwards: same as the normal mission path.
+
     Sends the robot to the coordinates defined in config/areas.yaml
-    under the ``area_2`` key. Once nav reports it has arrived, this
+    under the ``area_2`` key.  Once nav reports it has arrived, this
     state publishes the operator-entered Forest block state (set via
     node.set_forest_state(...) from the dashboard) to the Forest
     executor node over /fsm/area_command, then -- exactly like every
@@ -31,6 +41,43 @@ class Area2State(BaseState):
     """
 
     def execute(self, node):
+        # ── PHASE R0: Retry-only pre-nav /relative_move ────────────────────
+        # This phase is only active when trigger_retry_area(2) has been
+        # called (it sets area2_retry_move_triggered = False on the node).
+        # During a normal mission the attribute is absent, so we skip it.
+        if hasattr(node, "area2_retry_move_triggered"):
+            if not node.area2_retry_move_triggered:
+                # First tick of retry: fire the move and start the timer.
+                node.area2_retry_move_triggered = True
+
+                cfg = AREA_GOALS.get("area_2", {})
+                move_x        = float(cfg.get("retry_move_x",        0.0))
+                move_y        = float(cfg.get("retry_move_y",        0.0))
+                move_wait_sec = float(cfg.get("retry_move_wait_sec", 2.0))
+
+                msg = Vector3()
+                msg.x = move_x
+                msg.y = move_y
+                msg.z = 0.0
+                node.relative_move_pub.publish(msg)
+                node.get_logger().info(
+                    f"Area 2 RETRY: /relative_move x={move_x} y={move_y}, "
+                    f"waiting {move_wait_sec}s before nav."
+                )
+                node.area2_retry_move_finish_ts = (
+                    node.get_clock().now().nanoseconds
+                    + int(move_wait_sec * 1e9)
+                )
+                return  # wait until next tick
+
+            # Still waiting for the retry move timer to expire.
+            if not getattr(node, "area2_retry_move_complete", False):
+                if node.get_clock().now().nanoseconds < node.area2_retry_move_finish_ts:
+                    return  # still waiting — don't touch nav yet
+                node.area2_retry_move_complete = True
+                node.get_logger().info("Area 2 RETRY: pre-nav move complete.")
+
+        # ── Normal nav + task path ──────────────────────────────────────────
         node.get_logger().info(
             f"Area 2 → navigating to "
             f"x={_GOAL['x']}, y={_GOAL['y']}, yaw={_GOAL['yaw']}",

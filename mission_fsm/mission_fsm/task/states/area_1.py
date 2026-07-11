@@ -1,5 +1,8 @@
 """Area 1 state for mission_fsm."""
 
+import json
+import os
+import signal
 import subprocess
 from geometry_msgs.msg import Vector3
 from std_msgs.msg import String
@@ -14,9 +17,52 @@ _EXIT_WAIT_SEC =  3.0   # seconds to wait before transitioning to AREA_2
 
 # ── Post-exit rotate + green-flash check (NEW) ───────────────────────────────
 # TODO: confirm the z value that actually produces a true 180-degree turn.
-_ROTATE_Z        = 3.14
+_ROTATE_Z        = 180.0
 _ROTATE_WAIT_SEC =   2.0   # seconds to hold the rotate command
 _FLASH_AREA_NAME = "AREA_1_FLASH"  # informational only — green_light_node filters on "task"
+
+
+def kill_proxymity_process(node):
+    """Kill the proxymity_launch.py process group if it's still running.
+
+    Uses a process-group kill (not just the immediate bash PID) since
+    `ros2 launch` spawns proxymity_node / proxymity_controller_node /
+    green_light_node / the RealSense driver as its own children — killing
+    only the shell would leave them orphaned and still holding GPIO/camera
+    resources (this is what caused the "3 stale proximity_sensor nodes"
+    GPIO-busy issue).
+
+    Called both when Area 1 finishes (check_transition) and on FSM
+    reset/retry (fsm_node.py), so a fresh instance can always launch cleanly.
+    """
+    proc = getattr(node, "proxymity_process", None)
+    if proc is None:
+        return
+
+    if proc.poll() is not None:
+        # Already exited on its own.
+        node.proxymity_process = None
+        return
+
+    try:
+        pgid = os.getpgid(proc.pid)
+        node.get_logger().info(f"Killing proxymity_launch.py process group (pgid={pgid})...")
+        os.killpg(pgid, signal.SIGINT)
+        try:
+            proc.wait(timeout=5.0)
+            node.get_logger().info("proxymity_launch.py exited cleanly after SIGINT.")
+        except subprocess.TimeoutExpired:
+            node.get_logger().warn(
+                "proxymity_launch.py didn't exit after SIGINT within 5s — sending SIGKILL."
+            )
+            os.killpg(pgid, signal.SIGKILL)
+            proc.wait(timeout=2.0)
+    except ProcessLookupError:
+        pass  # process group already gone
+    except Exception as e:
+        node.get_logger().error(f"Error killing proxymity_launch.py: {e}")
+    finally:
+        node.proxymity_process = None
 
 
 class Area1State(BaseState):
@@ -49,7 +95,7 @@ class Area1State(BaseState):
             cfg = AREA_GOALS.get("area_1", {})
             move_x        = float(cfg.get("move_x",        -0.7))
             move_y        = float(cfg.get("move_y",         0.4))
-            move_wait_sec = float(cfg.get("move_wait_sec",  3.0))
+            move_wait_sec = float(cfg.get("move_wait_sec",  0.5))
 
             msg = Vector3()
             msg.x = move_x
@@ -87,8 +133,17 @@ class Area1State(BaseState):
                     "source ~/Workspace/proxymity_ws/install/setup.bash && "
                     "ros2 launch proxymity proxymity_launch.py"
                 )
-                subprocess.Popen(cmd, shell=True, executable="/bin/bash")
-                node.get_logger().info("Area 1: proxymity_launch.py spawned.")
+                log_path = "/tmp/proxymity_launch.log"
+                log_file = open(log_path, "w")
+                node.proxymity_process = subprocess.Popen(
+                    cmd, shell=True, executable="/bin/bash",
+                    stdout=log_file, stderr=subprocess.STDOUT,
+                    preexec_fn=os.setsid,  # new process group so we can kill the whole tree later
+                )
+                node.get_logger().info(
+                    f"Area 1: proxymity_launch.py spawned (pid={node.proxymity_process.pid}). "
+                    f"Output logging to {log_path}"
+                )
             except Exception as e:
                 node.get_logger().error(f"Area 1: failed to launch proximity: {e}")
 
@@ -166,7 +221,6 @@ class Area1State(BaseState):
             node.area_complete = False
 
             area_cmd = String()
-            import json
             area_cmd.data = json.dumps({
                 "command": "start",
                 "task": "green_detection",
@@ -191,5 +245,6 @@ class Area1State(BaseState):
     def check_transition(self, node):
         if getattr(node, "flash_complete", False):
             node.get_logger().info("Area 1 complete. Transitioning to AREA_2.")
+            kill_proxymity_process(node)
             return "AREA_2"
         return None
