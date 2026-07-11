@@ -1,7 +1,8 @@
 # ============================================================
-#  Area Goal Coordinates
+#  Area Goal Coordinates + Area 1 Move Config
 #
-#  Two or more named CONFIGS, each with its own area_1/2/3.
+#  Two or more named CONFIGS, each with its own area_1/2/3
+#  nav goals AND area_1 relative move values.
 #  Switch which one is active from the dashboard (FIELD CONFIG
 #  buttons), or change `active_config` below to pick the default
 #  used at launch.
@@ -9,6 +10,9 @@
 #  x   : metres along the map X axis
 #  y   : metres along the map Y axis
 #  yaw : final heading in RADIANS (0 = East, 1.5708 = North)
+#
+#  area_1.move_x / move_y : /relative_move Vector3 x/y values
+#  area_1.move_wait_sec   : seconds to wait before transitioning
 # ============================================================
 
 active_config: config_1
@@ -16,9 +20,9 @@ active_config: config_1
 configs:
   config_1:
     area_1:
-      x: 0.38
-      y: 0.42
-      yaw: -1.54422
+      move_x: -0.67 #six seven
+      move_y:  0.8
+      move_wait_sec: 3.0
     area_2:
       x: 1.54719
       y: -2.16271
@@ -28,12 +32,11 @@ configs:
       y: -3.31727
       yaw: -1.53451
 
-  # EDIT ME -- currently a copy of config_1. Fill in your second
-  
+  config_2:
     area_1:
-      x: 0.109317
-      y: -3.94351
-      yaw: -1.54422
+      move_x: -0.67    # edit me
+      move_y:  -0.8    # edit me
+      move_wait_sec: 3.0
     area_2:
       x: 1.54719
       y: -2.16271

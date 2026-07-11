@@ -179,6 +179,21 @@ class RobotDashboard:
                                   bg=BG_PANEL, fg=GREEN)
         self.lbl_state.pack()
 
+        # ── Green-light detection status indicator ────────────────────────────
+        sep_gl = tk.Frame(badge_frame, bg=GREY, height=1)
+        sep_gl.pack(fill=tk.X, pady=(10, 6))
+
+        tk.Label(badge_frame, text="GREEN LIGHT DETECTION", font=("Arial", 8),
+                 bg=BG_PANEL, fg=TEXT_DIM).pack()
+        self.lbl_green_light = tk.Label(
+            badge_frame,
+            text="● IDLE",
+            font=("Arial", 11, "bold"),
+            bg=BG_PANEL,
+            fg=TEXT_DIM,
+        )
+        self.lbl_green_light.pack()
+
     def _build_right_panel(self):
         rp = tk.Frame(self.window, bg=BG_DARK)
         rp.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -456,6 +471,16 @@ class RobotDashboard:
         state = getattr(self.fsm.task, "current_state", "—")
         color = STATE_COLORS.get(state, TEXT_WHITE)
         self.lbl_state.config(text=state, fg=color)
+
+        # Update green-light detection status
+        flash_triggered = getattr(self.fsm, "flash_triggered", False)
+        flash_complete  = getattr(self.fsm, "flash_complete",  False)
+        if flash_triggered and not flash_complete:
+            self.lbl_green_light.config(text="🟢 RUNNING", fg=GREEN)
+        elif flash_complete:
+            self.lbl_green_light.config(text="✅ DONE", fg=GREEN)
+        else:
+            self.lbl_green_light.config(text="● IDLE", fg=TEXT_DIM)
 
         # Update Forest-state readout from whatever's actually stored on FSMNode
         r1 = getattr(self.fsm, "r1_blocks", [])

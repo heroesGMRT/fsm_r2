@@ -1,132 +1,195 @@
 """Area 1 state for mission_fsm."""
 
-import json
-import math
-
-from action_msgs.msg import GoalStatus
+import subprocess
+from geometry_msgs.msg import Vector3
 from std_msgs.msg import String
 
 from ..base_state import BaseState
 from ...config.loader import AREA_GOALS
 
-# ── Goal for Area 1 ────────────────────────────────────────────
-# To change the target position, edit config/areas.yaml → area_1
-# ──────────────────────────────────────────────────────────────
-_GOAL = AREA_GOALS["area_1"]   # {x, y, yaw}
+# ── Exit move after proximity task (hardcoded, tune as needed) ──────────────
+_EXIT_MOVE_X   = 0.5   # metres (negative = reverse)
+_EXIT_MOVE_Y   =  0.0   # metres (positive = left strafe)
+_EXIT_WAIT_SEC =  3.0   # seconds to wait before transitioning to AREA_2
 
-# After visual servo: move back 0.5 m directly (reverse without rotating yaw)
-_BACK_OFFSET = 0.5   # metres to reverse
-_POST_ALIGN_GOAL = {
-    "x":   _GOAL["x"] - _BACK_OFFSET * math.cos(_GOAL["yaw"]),
-    "y":   _GOAL["y"] - _BACK_OFFSET * math.sin(_GOAL["yaw"]),
-    "yaw": _GOAL["yaw"],   # keep the same heading
-}
+# ── Post-exit rotate + green-flash check (NEW) ───────────────────────────────
+# TODO: confirm the z value that actually produces a true 180-degree turn.
+_ROTATE_Z        = 3.14
+_ROTATE_WAIT_SEC =   2.0   # seconds to hold the rotate command
+_FLASH_AREA_NAME = "AREA_1_FLASH"  # informational only — green_light_node filters on "task"
 
 
 class Area1State(BaseState):
-    """Handles all robot behaviour for Area 1 (spearhead visual servo + green detection).
+    """Handles robot behaviour for Area 1.
 
-    Navigates to the goal in config/areas.yaml, then executes three
-    sub-tasks **in sequence**:
-      1. Spearhead / visual-servo align (via visual executor)
-      2. Move back and rotate 180 ° (post-align repositioning)
-      3. Green detection (via green_detection_node)
+    Phase 1: publish /relative_move (values from areas.yaml config)
+    Phase 2: monitor move via system clock
+    Phase 3: spawn proxymity_launch.py subprocess
+    Phase 4: when proximity signals done (signal '31') → publish exit
+             /relative_move, wait, then transition to AREA_2
+    Phase 5: rotate 180 degrees via /relative_move
+    Phase 6: trigger green_light_node via /fsm/area_command, wait for
+             area_complete, then transition to AREA_2
     """
 
     def execute(self, node):
-        node.get_logger().info(
-            f"Area 1 → Navigate  "
-            f"x={_GOAL['x']}, y={_GOAL['y']}, yaw={_GOAL['yaw']}",
-            once=True,
-        )
-        node.nav.send_goal([_GOAL["x"], _GOAL["y"], _GOAL["yaw"]])
+        # ── PHASE 1: Initial Movement Trigger ──────────────────────────────
+        if not getattr(node, "post_align_nav_triggered", False):
+            node.post_align_nav_triggered = True
+            node.post_align_move_complete = False
+            node.proximity_started = False
+            node.exit_move_triggered = False
+            node.exit_move_complete = False
+            # NEW guards — reset alongside the rest on (re)entry to Area 1
+            node.rotate_triggered = False
+            node.rotate_complete = False
+            node.flash_triggered = False
+            node.flash_complete = False
 
-        # ── Step 1: Fire visual-servo when nav arrives ────────────────
-        if not node.align_triggered and node.nav.is_goal_done():
-            if node.nav.status == GoalStatus.STATUS_SUCCEEDED:
-                self._start_align(node)
-            else:
-                node.get_logger().error(
-                    "Area 1: nav did not succeed reaching the spearhead "
-                    "vantage point yet, will retry once it does.",
-                    throttle_duration_sec=2.0,
-                )
+            cfg = AREA_GOALS.get("area_1", {})
+            move_x        = float(cfg.get("move_x",        -0.7))
+            move_y        = float(cfg.get("move_y",         0.4))
+            move_wait_sec = float(cfg.get("move_wait_sec",  3.0))
 
-        # ── Step 2: After visual servo complete → move back + rotate 180° ─
-        # Wait for align_complete (set when /fsm/signal→area_complete arrives
-        # from spearhead_vision_node), NOT just nav.is_goal_done() which is
-        # still True from the initial nav goal at this point.
-        if (
-            node.align_triggered
-            and getattr(node, "align_complete", False)
-            and not getattr(node, "post_align_nav_triggered", False)
-        ):
-            self._start_post_align_nav(node)
+            msg = Vector3()
+            msg.x = move_x
+            msg.y = move_y
+            msg.z = 0.0
+            node.relative_move_pub.publish(msg)
+            node.get_logger().info(
+                f"Area 1: /relative_move x={move_x} y={move_y}, "
+                f"waiting {move_wait_sec}s."
+            )
+            node.move_finish_timestamp = (
+                node.get_clock().now().nanoseconds + int(move_wait_sec * 1e9)
+            )
 
-        # ── Step 3: Start green detection after repositioning done ────
+        # ── PHASE 2: Monitor Movement Progress ─────────────────────────────
         if (
             getattr(node, "post_align_nav_triggered", False)
-            and not getattr(node, "green_detection_triggered", False)
-            and node.nav.is_goal_done()
-            and node.nav.status == GoalStatus.STATUS_SUCCEEDED
+            and hasattr(node, "move_finish_timestamp")
+            and not getattr(node, "post_align_move_complete", False)
         ):
-            self._start_green_detection(node)
+            if node.get_clock().now().nanoseconds >= node.move_finish_timestamp:
+                node.post_align_move_complete = True
+                node.get_logger().info("Area 1: initial move complete.")
 
-    def _start_align(self, node):
-        msg = String()
-        msg.data = json.dumps({"command": "start", "area": "AREA_1"})
-        node.area_cmd_pub.publish(msg)
-        node.get_logger().info("Area 1: sent visual-servo start command.")
-        node.align_triggered = True
+        # ── PHASE 3: Spawn Proximity Package ───────────────────────────────
+        if (
+            getattr(node, "post_align_move_complete", False)
+            and not getattr(node, "proximity_started", False)
+        ):
+            node.proximity_started = True
+            node.get_logger().info("Area 1: spawning proxymity_launch.py...")
+            try:
+                cmd = (
+                    "source /opt/ros/$ROS_DISTRO/setup.bash && "
+                    "source ~/Workspace/proxymity_ws/install/setup.bash && "
+                    "ros2 launch proxymity proxymity_launch.py"
+                )
+                subprocess.Popen(cmd, shell=True, executable="/bin/bash")
+                node.get_logger().info("Area 1: proxymity_launch.py spawned.")
+            except Exception as e:
+                node.get_logger().error(f"Area 1: failed to launch proximity: {e}")
 
-    def _start_post_align_nav(self, node):
-        """Cancel any completed goal tracking so nav_interface sends the new goal,
-        then navigate back directly (reversing without rotating)."""
-        # Reset nav state so the interface doesn't skip the new goal as a duplicate
-        node.nav.completed_goal = None
-        node.nav.status = GoalStatus.STATUS_UNKNOWN
+        # ── PHASE 4: Proximity done → exit move ────────────────────────────
+        if (
+            getattr(node, "proximity_started", False)
+            and getattr(node, "proximity_done", False)
+            and not getattr(node, "exit_move_triggered", False)
+        ):
+            node.exit_move_triggered = True
+            node.exit_move_complete = False
 
-        node.get_logger().info(
-            f"Area 1: visual servo done → moving back directly  "
-            f"x={_POST_ALIGN_GOAL['x']:.3f}, y={_POST_ALIGN_GOAL['y']:.3f}, "
-            f"yaw={_POST_ALIGN_GOAL['yaw']:.4f} rad"
-        )
-        node.nav.send_goal(
-            [_POST_ALIGN_GOAL["x"], _POST_ALIGN_GOAL["y"], _POST_ALIGN_GOAL["yaw"]]
-        )
-        node.post_align_nav_triggered = True
+            msg = Vector3()
+            msg.x = _EXIT_MOVE_X
+            msg.y = _EXIT_MOVE_Y
+            msg.z = 0.0
+            node.relative_move_pub.publish(msg)
+            node.get_logger().info(
+                f"Area 1: proximity done → exit /relative_move "
+                f"x={_EXIT_MOVE_X} y={_EXIT_MOVE_Y}, waiting {_EXIT_WAIT_SEC}s."
+            )
+            node.exit_finish_timestamp = (
+                node.get_clock().now().nanoseconds + int(_EXIT_WAIT_SEC * 1e9)
+            )
 
-    def _start_green_detection(self, node):
-        """Publish start command to green detection node.
+        # Monitor exit move timer (same clock approach as Phase 2)
+        if (
+            getattr(node, "exit_move_triggered", False)
+            and hasattr(node, "exit_finish_timestamp")
+            and not getattr(node, "exit_move_complete", False)
+        ):
+            if node.get_clock().now().nanoseconds >= node.exit_finish_timestamp:
+                node.exit_move_complete = True
+                node.get_logger().info("Area 1: exit move complete.")
 
-        Starts a dedicated green detection node that subscribes to
-        /camera/image_raw, runs colour / YOLO detection for green
-        objects, and publishes results back to the FSM.
-        """
-        msg = String()
-        msg.data = json.dumps({
-            "command": "start",
-            "area": "AREA_1",
-            "task": "green_detection",
-        })
-        node.area_cmd_pub.publish(msg)
-        node.get_logger().info("Area 1: sent green-detection start command.")
-        node.green_detection_triggered = True
+        # ── PHASE 5: Rotate 180 degrees (NEW) ───────────────────────────────
+        if (
+            getattr(node, "exit_move_complete", False)
+            and not getattr(node, "rotate_triggered", False)
+        ):
+            node.rotate_triggered = True
+            node.rotate_complete = False
+
+            msg = Vector3()
+            msg.x = 0.0
+            msg.y = 0.0
+            msg.z = _ROTATE_Z
+            node.relative_move_pub.publish(msg)
+            node.get_logger().info(
+                f"Area 1: rotating — /relative_move z={_ROTATE_Z}, "
+                f"waiting {_ROTATE_WAIT_SEC}s."
+            )
+            node.rotate_finish_timestamp = (
+                node.get_clock().now().nanoseconds + int(_ROTATE_WAIT_SEC * 1e9)
+            )
+
+        # Monitor rotate timer
+        if (
+            getattr(node, "rotate_triggered", False)
+            and hasattr(node, "rotate_finish_timestamp")
+            and not getattr(node, "rotate_complete", False)
+        ):
+            if node.get_clock().now().nanoseconds >= node.rotate_finish_timestamp:
+                node.rotate_complete = True
+                node.get_logger().info("Area 1: rotation complete.")
+
+        # ── PHASE 6: Trigger green-flash detection (NEW) ────────────────────
+        if (
+            getattr(node, "rotate_complete", False)
+            and not getattr(node, "flash_triggered", False)
+        ):
+            node.flash_triggered = True
+            # Reset the shared area_complete flag so we only react to THIS
+            # green_light_node completion, not a stale one from elsewhere.
+            node.area_complete = False
+
+            area_cmd = String()
+            import json
+            area_cmd.data = json.dumps({
+                "command": "start",
+                "task": "green_detection",
+                "area": _FLASH_AREA_NAME,
+            })
+            node.area_cmd_pub.publish(area_cmd)
+            node.get_logger().info(
+                f"Area 1: triggered green-flash detection for '{_FLASH_AREA_NAME}' "
+                "via /fsm/area_command. Waiting for area_complete..."
+            )
+
+        # Monitor for green_light_node's completion signal (sets node.area_complete
+        # via fsm_node.py's existing _signal_callback — no new subscription needed)
+        if (
+            getattr(node, "flash_triggered", False)
+            and not getattr(node, "flash_complete", False)
+            and getattr(node, "area_complete", False)
+        ):
+            node.flash_complete = True
+            node.get_logger().info("Area 1: green flash confirmed.")
 
     def check_transition(self, node):
-        # area_complete fires twice in this state:
-        #   1st time → visual servo done  (captured as align_complete)
-        #   2nd time → green detection done (triggers AREA_2 transition)
-        if node.area_complete:
-            node.area_complete = False
-            if not getattr(node, "align_complete", False):
-                # First area_complete: visual servo finished
-                node.align_complete = True
-                node.get_logger().info(
-                    "Area 1: visual servo align complete — will reposition then start green detection."
-                )
-                return None  # stay in AREA_1
-            # Second area_complete: green detection finished
+        if getattr(node, "flash_complete", False):
             node.get_logger().info("Area 1 complete. Transitioning to AREA_2.")
             return "AREA_2"
         return None
