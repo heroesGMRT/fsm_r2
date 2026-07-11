@@ -27,7 +27,7 @@ configs:
     area_1:
       move_x: -0.8 #six seven
       move_y:  0.4
-      move_wait_sec: 3.0
+      move_wait_sec: 1.0
     area_2:
       x: 1.54719
       y: -2.16271
