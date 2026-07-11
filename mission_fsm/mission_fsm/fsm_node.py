@@ -66,6 +66,13 @@ class FSMNode(Node):
         # custom .msg is needed; each executor filters on "area".
         self.area_cmd_pub = self.create_publisher(String, '/fsm/area_command', 10)
 
+        # Bench: fire a single climb primitive straight at the Teensy bridge
+        # (same wire the Forest executor uses), for testing the choreography
+        # from the dashboard without a full mission. The bridge is single-
+        # flight, so this is safe to fire one at a time.
+        self.teensy_cmd_pub = self.create_publisher(String, '/teensy/command', 10)
+        self._bench_seq = 0
+
         self.get_logger().info("FSMNode ready. Listening on /fsm/signal")
 
         self.timer = self.create_timer(0.1, self.loop)
@@ -151,6 +158,26 @@ class FSMNode(Node):
         self.get_logger().warn(
             f"Dashboard → DEV FREE PATH: {msg.data}"
         )
+
+    def trigger_climb_primitive(self, command, meta=None):
+        """Called by the dashboard bench panel: fire ONE Forest primitive
+        (CLIMB_UP/CLIMB_DOWN/PICK_BLOCK_*/FORWARD_INIT/ROTATE_*) directly at
+        the teensy_command bridge and let it run the IR-gated choreography.
+        Bypasses the mission FSM entirely — bench testing only."""
+        self._bench_seq += 1
+        msg = String()
+        msg.data = json.dumps({
+            "source": "dashboard_bench",
+            "sequence": self._bench_seq,
+            "total": 1,
+            "command": str(command),
+            "comment": "dashboard bench",
+            "meta": meta or {},
+        })
+        self.teensy_cmd_pub.publish(msg)
+        self.get_logger().warn(
+            f"Dashboard → BENCH primitive {command} (seq {self._bench_seq})"
+            + (f" meta={meta}" if meta else ""))
 
     def trigger_start(self):
         """Begin mission from Area 1."""

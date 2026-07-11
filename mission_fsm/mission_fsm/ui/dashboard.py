@@ -257,6 +257,7 @@ class RobotDashboard:
         self.lbl_forest_current.pack(anchor=tk.W)
 
         self._build_dev_free_path_card(parent)
+        self._build_bench_climb_card(parent)
         self._build_area2_status(parent)
 
     def _build_dev_free_path_card(self, parent):
@@ -298,6 +299,47 @@ class RobotDashboard:
                   width=16, height=1, relief=tk.FLAT,
                   cursor="hand2", command=self._on_dev_free_path
                   ).pack(side=tk.RIGHT)
+
+    def _build_bench_climb_card(self, parent):
+        """Bench-only card: fire ONE Forest climb primitive straight at the
+        teensy_command bridge (same wire the executor uses), to test the
+        IR-gated choreography from the GUI. No planner, no mission FSM."""
+        card = tk.Frame(parent, bg=BG_PANEL, padx=16, pady=10,
+                        highlightbackground=ACCENT_1, highlightthickness=1)
+        card.pack(fill=tk.X, pady=(12, 0))
+
+        tk.Label(card, text="BENCH CLIMB PRIMITIVES (fires the Teensy bridge)",
+                 font=("Arial", 9, "bold"), bg=BG_PANEL, fg=ACCENT_1
+                 ).pack(anchor=tk.W)
+
+        # (label, command, meta) — one button each
+        prims = [
+            ("CLIMB UP",   "CLIMB_UP",       {}),
+            ("CLIMB DOWN", "CLIMB_DOWN",     {}),
+            ("PICK UP",    "PICK_BLOCK_UP",  {"end_on": True}),
+            ("PICK DOWN",  "PICK_BLOCK_DOWN", {"end_on": True}),
+            ("FWD INIT",   "FORWARD_INIT",   {}),
+            ("ROTATE 90",  "ROTATE_90",      {}),
+        ]
+        row = tk.Frame(card, bg=BG_PANEL)
+        row.pack(fill=tk.X, pady=(6, 0))
+        for i, (label, command, meta) in enumerate(prims):
+            tk.Button(row, text=label, bg=GREY, fg="white", font=self._bold,
+                      width=10, height=1, relief=tk.FLAT, cursor="hand2",
+                      command=lambda c=command, m=meta, t=label:
+                          self._on_bench_primitive(t, c, m)
+                      ).grid(row=i // 3, column=i % 3, padx=3, pady=3)
+
+    def _on_bench_primitive(self, label: str, command: str, meta: dict):
+        if not messagebox.askokcancel(
+                "BENCH PRIMITIVE",
+                f"Fire '{label}' ({command}) at the Teensy bridge?\n\n"
+                "The robot WILL move. Make sure the bridge (teensy_command) "
+                "is running and the robot is positioned for this maneuver."):
+            return
+        self.fsm.trigger_climb_primitive(command, meta)
+        self.lbl_forest_msg.config(text=f"Bench: sent {command}", fg=ACCENT_1)
+        self.window.after(4000, lambda: self.lbl_forest_msg.config(text=""))
 
     def _build_area2_status(self, parent):
         status_card = tk.Frame(parent, bg=BG_PANEL, padx=16, pady=12,
