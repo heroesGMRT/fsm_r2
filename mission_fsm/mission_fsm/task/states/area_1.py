@@ -16,10 +16,20 @@ _EXIT_MOVE_Y   =  0.0   # metres (positive = left strafe)
 _EXIT_WAIT_SEC =  3.0   # seconds to wait before transitioning to AREA_2
 
 # ── Post-exit rotate + green-flash check (NEW) ───────────────────────────────
-# TODO: confirm the z value that actually produces a true 180-degree turn.
-_ROTATE_Z        = 180.0
+# /relative_move z = yaw in RADIANS (REP-103). 3.14159 = 180°, a half turn.
+_ROTATE_Z        = 3.14159
 _ROTATE_WAIT_SEC =   2.0   # seconds to hold the rotate command
 _FLASH_AREA_NAME = "AREA_1_FLASH"  # informational only — green_light_node filters on "task"
+
+# Seconds to hold after the proximity node's pickup-done signal before the
+# exit (backward) move, giving the gripper time to settle.
+_PICKUP_SETTLE_SEC = 5.0
+
+# Proximity workspace to source before `ros2 launch`. Overridable per-machine
+# via the PROXYMITY_WS env var (the two dev machines used different layouts).
+_PROXYMITY_WS = os.environ.get(
+    "PROXYMITY_WS", "/home/wafdan/workshop/proxymity_ws"
+)
 
 
 def kill_proxymity_process(node):
@@ -84,6 +94,7 @@ class Area1State(BaseState):
             node.post_align_nav_triggered = True
             node.post_align_move_complete = False
             node.proximity_started = False
+            node.settle_started = False
             node.exit_move_triggered = False
             node.exit_move_complete = False
             # NEW guards — reset alongside the rest on (re)entry to Area 1
@@ -96,6 +107,8 @@ class Area1State(BaseState):
             move_x        = float(cfg.get("move_x",        -0.7))
             move_y        = float(cfg.get("move_y",         0.4))
             move_wait_sec = float(cfg.get("move_wait_sec",  0.5))
+            # Captured now so Phase 3's launch picks up the UI-set value.
+            node.prox_forward_x = float(cfg.get("prox_forward_x", -1.5))
 
             msg = Vector3()
             msg.x = move_x
@@ -128,10 +141,12 @@ class Area1State(BaseState):
             node.proximity_started = True
             node.get_logger().info("Area 1: spawning proxymity_launch.py...")
             try:
+                prox_forward_x = float(getattr(node, "prox_forward_x", -1.5))
                 cmd = (
                     "source /opt/ros/$ROS_DISTRO/setup.bash && "
-                    "source ~/Workspace/proxymity_ws/install/setup.bash && "
-                    "ros2 launch proxymity proxymity_launch.py"
+                    f"source {_PROXYMITY_WS}/install/setup.bash && "
+                    "ros2 launch proxymity proxymity_launch.py "
+                    f"forward_relative_x:={prox_forward_x}"
                 )
                 log_path = "/tmp/proxymity_launch.log"
                 log_file = open(log_path, "w")
@@ -147,10 +162,26 @@ class Area1State(BaseState):
             except Exception as e:
                 node.get_logger().error(f"Area 1: failed to launch proximity: {e}")
 
-        # ── PHASE 4: Proximity done → exit move ────────────────────────────
+        # ── PHASE 4a: Proximity done → start settle timer ──────────────────
         if (
             getattr(node, "proximity_started", False)
             and getattr(node, "proximity_done", False)
+            and not getattr(node, "settle_started", False)
+        ):
+            node.settle_started = True
+            node.settle_finish_timestamp = (
+                node.get_clock().now().nanoseconds + int(_PICKUP_SETTLE_SEC * 1e9)
+            )
+            node.get_logger().info(
+                f"Area 1: proximity done — settling {_PICKUP_SETTLE_SEC}s "
+                "before exit move."
+            )
+
+        # ── PHASE 4b: Settle elapsed → exit move ───────────────────────────
+        if (
+            getattr(node, "settle_started", False)
+            and node.get_clock().now().nanoseconds
+                >= getattr(node, "settle_finish_timestamp", 0)
             and not getattr(node, "exit_move_triggered", False)
         ):
             node.exit_move_triggered = True

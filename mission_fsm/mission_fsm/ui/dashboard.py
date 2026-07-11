@@ -78,8 +78,9 @@ class RobotDashboard:
         self._stop   = threading.Event()
 
         window.title("KRAI 2026 — MASTER CONTROL DASHBOARD")
-        window.geometry("900x640")
-        window.resizable(False, False)
+        window.geometry("900x820")
+        window.minsize(900, 640)
+        window.resizable(True, True)
         window.configure(bg=BG_DARK)
 
         # Load fonts
@@ -197,6 +198,14 @@ class RobotDashboard:
     def _build_right_panel(self):
         rp = tk.Frame(self.window, bg=BG_DARK)
         rp.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # ── Area 1 move config (live-editable move_x / move_y / prox_forward_x) ─
+        # Packed first so it stays visible above the (expanding) forest cards.
+        cfg_card = tk.Frame(rp, bg=BG_PANEL)
+        cfg_card.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(cfg_card, text="AREA 1 MOVE CONFIG", font=self._large,
+                 bg=BG_PANEL, fg=TEXT_WHITE).pack(pady=(8, 4))
+        self._build_move_editor(cfg_card)
 
         tk.Label(rp, text="FOREST STATE — AREA 2",
                  font=self._large, bg=BG_DARK, fg=TEXT_WHITE).pack(pady=(0, 8))
@@ -391,6 +400,66 @@ class RobotDashboard:
     def _on_reset(self):
         self.fsm.trigger_reset()
 
+    def _build_move_editor(self, parent):
+        """Entry fields to live-edit Area 1's move_x / move_y and the proximity
+        forward move (prox_forward_x)."""
+        self._x_var = tk.StringVar()
+        self._y_var = tk.StringVar()
+        self._prox_x_var = tk.StringVar()
+
+        def field(row, label, var):
+            tk.Label(row, text=label, font=self._bold,
+                     bg=BG_PANEL, fg=TEXT_WHITE).pack(side=tk.LEFT, padx=(6, 2))
+            e = tk.Entry(row, textvariable=var, width=6, justify="center",
+                         bg=BG_CARD, fg=TEXT_WHITE, insertbackground=TEXT_WHITE,
+                         relief=tk.FLAT, font=self._bold)
+            e.pack(side=tk.LEFT, padx=(0, 8))
+            return e
+
+        tk.Label(parent, text="AREA 1 MOVE  (m)", font=("Arial", 8),
+                 bg=BG_PANEL, fg=TEXT_DIM).pack(pady=(4, 2))
+        row1 = tk.Frame(parent, bg=BG_PANEL)
+        row1.pack()
+        field(row1, "x", self._x_var)
+        field(row1, "y", self._y_var)
+
+        tk.Label(parent, text="PROXIMITY FWD X  (m)", font=("Arial", 8),
+                 bg=BG_PANEL, fg=TEXT_DIM).pack(pady=(4, 2))
+        row2 = tk.Frame(parent, bg=BG_PANEL)
+        row2.pack()
+        field(row2, "x", self._prox_x_var)
+
+        tk.Button(parent, text="APPLY", bg=ACCENT_2, fg="white", font=self._bold,
+                  relief=tk.FLAT, cursor="hand2", command=self._on_apply_move,
+                  width=10).pack(pady=(6, 0))
+
+        self.lbl_move_status = tk.Label(parent, text="", font=("Arial", 8),
+                                        bg=BG_PANEL, fg=TEXT_DIM)
+        self.lbl_move_status.pack(pady=(2, 6))
+
+        self._populate_move_fields()
+
+    def _populate_move_fields(self):
+        """Load the active config's editable Area 1 values into the fields."""
+        from ..config.loader import AREA_GOALS
+        goals = AREA_GOALS.get("area_1", {})
+        self._x_var.set(str(goals.get("move_x", "")))
+        self._y_var.set(str(goals.get("move_y", "")))
+        self._prox_x_var.set(str(goals.get("prox_forward_x", "")))
+
+    def _on_apply_move(self):
+        try:
+            x = float(self._x_var.get())
+            y = float(self._y_var.get())
+            prox_x = float(self._prox_x_var.get())
+        except ValueError:
+            self.lbl_move_status.config(text="values must be numbers", fg=ACCENT_1)
+            return
+        self.fsm.trigger_set_move(x, y)
+        self.fsm.trigger_set_prox_forward_x(prox_x)
+        self.lbl_move_status.config(
+            text=f"applied  x={x} y={y}  prox_x={prox_x}", fg=GREEN)
+
     def _on_set_config(self, name: str):
         """Switch the active field config. Blocked while a mission is
         actually running, since area_1/2/3's nav goals are cached at
@@ -413,6 +482,7 @@ class RobotDashboard:
             return
 
         self._reload_state_goals()
+        self._populate_move_fields()
         self._highlight_active_config(name)
         self.lbl_active_config.config(text=f"active: {name}")
 
@@ -620,9 +690,24 @@ def run_dashboard_main_thread(fsm_node) -> None:
     threading/signal crashes (stack smashing).
     """
     import rclpy
+    import signal
 
     root = tk.Tk()
     app = RobotDashboard(root, fsm_node)
+
+    # Make Ctrl+C / `kill` unwind the mainloop so main()'s finally-block runs
+    # its proximity cleanup. The ros_spin_step below re-enters Python every
+    # 10 ms, so the handler is serviced even while Tk's C mainloop is blocking.
+    def _on_term(signum, _frame):
+        fsm_node.get_logger().warn(
+            f"Dashboard received signal {signum} — shutting down.")
+        root.quit()
+
+    for _sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(_sig, _on_term)
+        except (ValueError, OSError):
+            pass  # not on main thread (legacy launch_dashboard path)
 
     # Periodic step to spin ROS 2 callbacks
     def ros_spin_step():

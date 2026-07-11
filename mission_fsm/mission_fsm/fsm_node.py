@@ -128,6 +128,21 @@ class FSMNode(Node):
         self.post_align_nav_triggered = False
         self.area2_retry_move_triggered = False
 
+    def trigger_set_move(self, x: float, y: float):
+        """Override Area 1's first move (move_x/move_y) in the active config at
+        runtime. Takes effect on the next Area 1 run (in-memory only)."""
+        from .config import loader
+        loader.update_active("area_1", "move_x", float(x))
+        loader.update_active("area_1", "move_y", float(y))
+        self.get_logger().info(f"Dashboard → AREA 1 MOVE x={x} y={y}")
+
+    def trigger_set_prox_forward_x(self, value: float):
+        """Override the proximity node's forward_relative_x in the active
+        config. Applied when Area 1 next launches proximity (in-memory only)."""
+        from .config import loader
+        loader.update_active("area_1", "prox_forward_x", float(value))
+        self.get_logger().info(f"Dashboard → PROX FORWARD X {value}")
+
     def trigger_stop(self):
         """Emergency stop: cancel active nav goal and hold current state."""
         self.get_logger().warn("Dashboard → EMERGENCY STOP")
@@ -185,10 +200,18 @@ def main(args=None):
     # The dashboard event loop periodically spins the ROS 2 node synchronously,
     # ensuring absolute thread safety and preventing stack-smashing crashes.
     from .ui.dashboard import run_dashboard_main_thread
-    run_dashboard_main_thread(node)
-
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        run_dashboard_main_thread(node)
+    finally:
+        # Tear down any proximity stack we spawned, even on Ctrl+C / SIGTERM /
+        # crash. It runs in its own session (os.setsid), so the OS won't
+        # cascade-kill it when we exit — without this it orphans and keeps
+        # holding GPIO/camera (the "stale proximity nodes" problem).
+        from .task.states.area_1 import kill_proxymity_process
+        kill_proxymity_process(node)
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 

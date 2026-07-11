@@ -22,6 +22,13 @@ import yaml
 _CONFIG_PATH = Path(__file__).parent / "areas.yaml"
 _REQUIRED_AREAS = ("area_1", "area_2", "area_3")
 
+# Keys each area block must define. Only Area 1's move params are validated at
+# key level (a missing one is a startup error rather than a silent
+# wrong-distance move at runtime).
+_REQUIRED_KEYS = {
+    "area_1": ("move_x", "move_y", "prox_forward_x"),
+}
+
 
 def _load_raw() -> dict:
     with open(_CONFIG_PATH, "r") as f:
@@ -32,6 +39,13 @@ def _validate(name: str, goals: dict) -> None:
     missing = [a for a in _REQUIRED_AREAS if a not in goals]
     if missing:
         raise ValueError(f"Config '{name}' is missing areas: {missing}")
+    for area, keys in _REQUIRED_KEYS.items():
+        block = goals.get(area) or {}
+        missing_keys = [k for k in keys if k not in block]
+        if missing_keys:
+            raise ValueError(
+                f"Config '{name}' area '{area}' is missing keys: {missing_keys}"
+            )
 
 
 _raw = _load_raw()
@@ -61,6 +75,17 @@ AREA_GOALS: dict = dict(CONFIGS[ACTIVE_CONFIG])
 def available_configs() -> list:
     """Names of all configs defined in areas.yaml, in file order."""
     return list(CONFIGS.keys())
+
+
+def update_active(area: str, key: str, value) -> None:
+    """Override a single value in the currently active config.
+
+    In-memory only -- does NOT rewrite areas.yaml, so edits are lost on
+    restart. The change persists across a set_active_config() away-and-back
+    because it's written into CONFIGS[ACTIVE_CONFIG] as well as AREA_GOALS.
+    """
+    AREA_GOALS.setdefault(area, {})[key] = value
+    CONFIGS[ACTIVE_CONFIG].setdefault(area, {})[key] = value
 
 
 def set_active_config(name: str) -> dict:

@@ -28,6 +28,7 @@ configs:
       move_x: -0.8 #six seven
       move_y:  0.4
       move_wait_sec: 1.0
+      prox_forward_x: -1.5   # proximity forward_relative_x launch arg (m)
     area_2:
       x: 1.54719
       y: -2.16271
@@ -45,6 +46,7 @@ configs:
       move_x: -0.8    # edit me
       move_y:  -0.0    # edit me
       move_wait_sec: 3.0
+      prox_forward_x: -1.5   # proximity forward_relative_x launch arg (m)
     area_2:
       x: 1.54719
       y: -2.16271
