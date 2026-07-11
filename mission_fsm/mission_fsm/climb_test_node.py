@@ -11,8 +11,8 @@ observable on the wire:
   * /teensy/ack   — done/error + total elapsed time
 
 so you can read off the real durations and tune the bridge parameters
-(``forward_init_s``, ``climb_up_seat_s``, ``climb_down_clear_s``,
-``mech_dwell_s``, ``creep_speed``, ...).
+(``forward_init_m``, ``d_center_up_m``, ``d_center_down_m``,
+``creep_ceiling_m``, ``creep_ceiling_short_m``, ``mech_dwell_s``, ...).
 
 Usage (bridge running in another terminal: ``ros2 run mission_fsm teensy_command``):
 
@@ -76,12 +76,12 @@ _MECH_LABELS = {
 }
 
 _IR_BIT_NAMES = ['front-deadwheel back', 'middle-deadwheel front',
-                 'middle-deadwheel back']
+                 'middle-deadwheel back', 'back-deadwheel front']
 
 
 def _ir_repr(value: int) -> str:
-    bits = f"{value & 0b111:03b}"
-    on = [_IR_BIT_NAMES[b] for b in range(3) if value & (1 << b)]
+    bits = f"{value & 0b1111:04b}"
+    on = [_IR_BIT_NAMES[b] for b in range(4) if value & (1 << b)]
     return f"0b{bits}" + (f"  ({', '.join(on)})" if on else "  (all clear)")
 
 
@@ -134,7 +134,7 @@ class ClimbTestNode(Node):
         self._log('ACK', f"seq {seq}: {status.upper()}")
 
     def _on_ir(self, msg: Int32):
-        value = msg.data & 0b111
+        value = msg.data & 0b1111
         if value == self._last_ir:
             return
         self._last_ir = value
@@ -318,7 +318,7 @@ def main(args=None):
             if len(done) > 1:
                 print(f"  mean of successful runs: {sum(done)/len(done):.2f}s")
         print('\nTune with e.g.: ros2 param set /teensy_command '
-              'climb_up_seat_s 2.5   (or rerun with --set ...)')
+              'd_center_up_m 0.25   (or rerun with --set ...)')
     except KeyboardInterrupt:
         print('\nInterrupted. WARNING: the bridge may STILL be driving the '
               'robot — this script cannot stop it. Kill the bridge node or '

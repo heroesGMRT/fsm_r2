@@ -10,13 +10,18 @@ Translates the forest executor's high-level primitives from
   Used for every known-distance move (spec 3.3). The node gives NO
   completion feedback, so each move is followed by a COMPUTED settle wait
   (distance / ``relmove_speed_est`` + ``relmove_settle_s``);
-* IR-gated creeps ("go until a bit trips") as a NUDGE LOOP (spec 3.3):
-  repeat { one ``/relative_move`` of ``nudge_distance_m`` (floor 0.1 m,
-  NEVER below); wait for it to settle; check ``/ir_sensors`` } until the
-  milestone predicate fires. Overshoot past a milestone is bounded by one
-  nudge. ``_NudgeUntilIrStep`` is the abstraction point for the spec-3.4
-  preemption upgrade (single long move + cancel on IR) if ``/relative_move``
-  turns out to support mid-move cancel — swap only that class;
+* IR-gated creeps ("go until a bit trips"). Two backends (``creep_backend``):
+  - ``ceiling`` (DEFAULT, handoff v3 §1): issue ONE ``/relative_move`` with a
+    generous forward CEILING (``creep_ceiling_m`` ~0.9 m, or the SHORT
+    ``creep_ceiling_short_m`` at a tipping edge), watch ``/ir_sensors`` and
+    publish ``{0,0,0}`` on ``/relative_move`` the instant the milestone
+    predicate fires to cut the move short. RELIES on ``/relative_move`` being
+    PRE-EMPTIBLE (a mid-move ``{0,0,0}`` halts it) — OPEN item 2, bench-check.
+    If the ceiling is reached first the step errors (milestone missed).
+  - ``nudge`` (fallback): repeat { one ``/relative_move`` of
+    ``nudge_distance_m`` (floor 0.1 m); settle; check IR } until the predicate
+    fires. Overshoot bounded by one nudge, runaway by ``max_nudges``. Use this
+    if preemption turns out unreliable;
 * timed ``geometry_msgs/Twist`` on ``/cmd_vel`` for rotations, unless
   ``rotate_via_relative_move`` is set (whether Vector3.z is yaw on
   ``/relative_move`` is UNCONFIRMED — check the node's source);
@@ -31,42 +36,38 @@ Ack contract: ``{"sequence": n, "status": "done"}`` on ``/teensy/ack`` only
 after the FULL step list of a command has physically finished; ``"error"``
 on unknown commands, IR timeouts, or failed preconditions.
 
-IR sensor model (``/ir_sensors``, Int32 0..7, 3 bits)
------------------------------------------------------
-All three sensors are clustered mid-chassis and report where the block edge
-has reached under the robot (NOT one-sensor-per-wheel). Wheel order
-front->back: front deadwheel, front lift wheel, middle deadwheel, back lift
-wheel, back deadwheel. Sensor mounting:
+IR sensor model (``/ir_sensors``, Int32 0..15, 4 bits — handoff v3 §2)
+---------------------------------------------------------------------
+Four sensors, symmetric around the middle deadwheel; each detects the ground
+close beneath it. Wheel order front->back: front deadwheel, front lift wheel,
+middle deadwheel, back lift wheel, back deadwheel. Sensor mounting:
 
-* bit 0 (value 1): back of the FRONT deadwheel
-* bit 1 (value 2): FRONT side of the MIDDLE deadwheel
-* bit 2 (value 4): BACK of the MIDDLE deadwheel (set == middle deadwheel
-  has landed)
+* bit 0 (value 1): back of the FRONT deadwheel      [front-most]
+* bit 1 (value 2): FRONT of the MIDDLE deadwheel
+* bit 2 (value 4): BACK of the MIDDLE deadwheel      (middle deadwheel landed)
+* bit 3 (value 8): FRONT of the BACK deadwheel       [back-most]
 
-There is NO sensor on the lift wheels or the back deadwheel — those steps
-are TIMED. The same integer means different things in climb-up vs
-climb-down, so each maneuver decodes it in its own context (per-maneuver
-predicates below) — there is deliberately NO global "IR value -> action"
-table.
+bit 3 senses the back deadwheel, so BOTH climbs are now fully sensor-closed —
+the old TIMED back-settle is gone (climb-up creeps to reading 15; climb-down
+gates the retract on reading 0000). The same integer means different things in
+climb-up vs climb-down, so each maneuver decodes it in its OWN context
+(per-maneuver predicates below) — there is deliberately NO global
+"IR value -> action" table. Dark tier-A block tops previously caused misreads;
+if that recurs it is the first suspect.
 
 OPEN ITEMS to confirm on hardware (all mapped to parameters):
-1. Lift-wheel codes CONFIRMED (operator, 2026-07-07): timed variants
-   110-115. The lift wheels ARE the climb mechanism: climb-up step 1
-   extends both (114), then 112/113 retract front/back one at a time as
-   the deadwheels seat. Still unverified: whether the Teensy's TIMED
-   lift duration matches ``mech_dwell_s`` here.
-2. Climb-down post-110 IR progression + front/back firing order (the
-   re-trigger predicates encode the agreed intent, unverified).
-3. Descent tipping safety: the front lift wheel must reach the lower block
-   BEFORE the CoM crosses the pillar edge. In nudge mode the lift now
-   extends while STATIONARY (bounded overshoot = one nudge), but the
-   assumption still needs a bench check.
-4. /relative_move behaviour: actual travel speed (``relmove_speed_est``
-   feeds the settle wait — too small just wastes time, too big starts the
-   next step mid-move), whether a new command mid-move preempts or queues,
-   and whether Vector3.z is yaw (``rotate_via_relative_move``).
-5. All ``*_m`` distances (BENCH-TUNE) and the 1 s descent dwell.
-6. Whether pick-at-011 works (``enable_pick_at_011``, default off).
+1. Axis/sign convention (§0): +y = strafe LEFT, +z = CCW yaw (REP-103
+   assumed). Two bench checks before any real run.
+2. ``/relative_move`` pre-emptibility: a mid-move ``{0,0,0}`` halts it
+   promptly (the ``ceiling`` creep backend depends on this).
+3. Descent IR trace is clean/monotonic 1111 -> 1110 -> 1100 -> 1000 -> 0000
+   with no re-set / repeated values.
+4. Descent front-lift tipping window (bit0->bit1 unsupported): CoM behind
+   the middle deadwheel.
+5. All ``*_m`` distances and creep ceilings (BENCH-TUNE via the calibration
+   script / ``climb_test --set``).
+6. Whether the pick at reading 7 works and the KFS is in gripper reach there
+   (``enable_pick``, fires ``pick_grab_cmd`` = 51 "Grab Put Up").
 """
 
 import json
@@ -74,6 +75,7 @@ import json
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, Vector3
+from nav_msgs.msg import Odometry
 from std_msgs.msg import Int32, String
 
 import math
@@ -172,7 +174,7 @@ class _DriveUntilIrStep:
             node.publish_stop()
             raise _StepError(
                 f"IR timeout ({self.timeout_s:.0f}s) waiting for: {self.label} "
-                f"(last /ir_sensors={ir:03b})")
+                f"(last /ir_sensors={ir:04b})")
         node.publish_twist(self.vx, 0.0, 0.0)
         return False
 
@@ -241,7 +243,7 @@ class _NudgeUntilIrStep:
         if self._nudges >= max_nudges:
             raise _StepError(
                 f"IR milestone not reached after {max_nudges} nudges: "
-                f"{self.label} (last /ir_sensors={ir:03b})")
+                f"{self.label} (last /ir_sensors={ir:04b})")
         # spec 3.3: nudge floor 0.1 m — tune UP if needed, never below
         dist = max(0.1, float(node._p('nudge_distance_m'))) * self.direction
         self._nudges += 1
@@ -251,6 +253,101 @@ class _NudgeUntilIrStep:
         self._settle_deadline = now \
             + abs(dist) / float(node._p('relmove_speed_est')) \
             + float(node._p('relmove_settle_s'))
+        return False
+
+
+class _CeilingUntilIrStep:
+    """IR-gated creep, handoff v3 §1: issue ONE /relative_move with a
+    generous forward (or backward) CEILING, then watch /ir_sensors and
+    publish {0,0,0} the instant the milestone predicate fires to cut the
+    move short. The ceiling = max safe travel if the sensor never fires
+    (SHORT at a tipping edge). Reaching the ceiling without the milestone
+    is an error.
+
+    Depends on /relative_move being PRE-EMPTIBLE (a mid-move {0,0,0}
+    halts it) — OPEN item 2. If preemption is unreliable, switch
+    ``creep_backend`` to ``nudge``."""
+
+    def __init__(self, direction, predicate, label, ceiling_m):
+        self.direction = 1 if direction >= 0 else -1
+        self.predicate, self.label = predicate, label
+        self.ceiling_m = abs(float(ceiling_m))
+        self._state = {}
+        self._issued = False
+        self._deadline = None
+
+    def start(self, node, now):
+        self._state = {}
+        self._issued = False
+        self._deadline = None
+
+    def tick(self, node, now, ir):
+        # Check the milestone with IR in hand BEFORE issuing the ceiling move,
+        # so a reading already at the milestone (e.g. block-to-block transit)
+        # doesn't fire a full-ceiling move we must instantly cancel.
+        if not self._issued:
+            if self.predicate(ir, self._state):
+                return True
+            dist = self.ceiling_m * self.direction
+            node.publish_relative_move(
+                dist, 0.0, 0.0,
+                f"ceiling creep (<= {self.ceiling_m:.2f} m) toward: "
+                f"{self.label}")
+            speed = max(float(node._p('relmove_speed_est')), 1e-3)
+            # allow the FULL ceiling to travel plus a settle margin before we
+            # call it a miss (the node closes on odometry, no feedback)
+            self._deadline = now + self.ceiling_m / speed \
+                + float(node._p('relmove_settle_s'))
+            self._issued = True
+            return False
+        if self.predicate(ir, self._state):
+            node.publish_relmove_stop()  # {0,0,0}: cut the move short
+            return True
+        if now >= self._deadline:
+            node.publish_relmove_stop()
+            raise _StepError(
+                f"IR milestone not reached within ceiling "
+                f"{self.ceiling_m:.2f} m: {self.label} "
+                f"(last /ir_sensors={ir:04b})")
+        return False
+
+
+class _LateralRecenterStep:
+    """Null the odom-reported lateral (y) offset with a single /relative_move
+    y: nudge (handoff v3 §6, +y = LEFT per REP-103). Matters most before a
+    rotation, so it is prepended to ROTATE_* when ``recenter_before_rotate``
+    is on. Needs an odom source (``odom_topic``); with none it warns and
+    skips (offset unknown), so it is safe to leave wired."""
+
+    def __init__(self, label):
+        self.label = label
+        self._issued = False
+        self._deadline = None
+
+    def start(self, node, now):
+        self._issued = False
+        self._deadline = None
+
+    def tick(self, node, now, ir):
+        if self._issued:
+            return now >= self._deadline
+        if node._odom_y is None:
+            node.get_logger().warn(
+                f"lateral recenter skipped ({self.label}): no odom on "
+                f"'{node._p('odom_topic')}' — set odom_topic to enable")
+            return True
+        offset = float(node._odom_y)
+        max_lat = float(node._p('max_lateral_m'))
+        dy = max(-max_lat, min(max_lat, -offset))  # +y = left; drive toward 0
+        if abs(dy) < 1e-3:
+            return True
+        node.publish_relative_move(
+            0.0, dy, 0.0,
+            f"lateral recenter (odom y={offset:+.3f}): {self.label}")
+        self._deadline = now + abs(dy) / max(
+            float(node._p('relmove_speed_est')), 1e-3) \
+            + float(node._p('relmove_settle_s'))
+        self._issued = True
         return False
 
 
@@ -281,10 +378,10 @@ class _CheckIrStep:
             return True
         if self.strict:
             raise _StepError(f"precondition failed: {self.label} "
-                             f"(/ir_sensors={ir:03b})")
+                             f"(/ir_sensors={ir:04b})")
         node.get_logger().warn(
             f"precondition NOT met (continuing, strict check off): "
-            f"{self.label} (/ir_sensors={ir:03b})")
+            f"{self.label} (/ir_sensors={ir:04b})")
         return True
 
 
@@ -310,28 +407,40 @@ class TeensyCommandNode(Node):
         # (the original open-loop timed backend, kept in case cmd_vel is fixed)
         self.declare_parameter('motion_backend', 'relative_move')
         # --- /relative_move motion (spec 3: distances, not durations) --------
+        # creep_backend: 'ceiling' (handoff §1, one long move + {0,0,0} cut) or
+        # 'nudge' (0.1 m nudge loop, if preemption proves unreliable).
+        self.declare_parameter('creep_backend', 'ceiling')
+        self.declare_parameter('creep_ceiling_m', 0.9)     # generous creep ceiling
+        self.declare_parameter('creep_ceiling_short_m', 0.25)  # tipping-edge steps
         self.declare_parameter('nudge_distance_m', 0.1)    # FLOOR 0.1, never below
-        self.declare_parameter('max_nudges', 8)            # runaway bound per creep
+        self.declare_parameter('max_nudges', 12)           # runaway bound per creep
         self.declare_parameter('relmove_speed_est', 0.1)   # m/s, for settle wait
         self.declare_parameter('relmove_settle_s', 1.0)    # margin after each move
         self.declare_parameter('forward_init_m', 1.0)      # entrance approach (BENCH-TUNE)
-        self.declare_parameter('climb_up_seat_m', 0.15)    # B1 step 7 (BENCH-TUNE)
-        self.declare_parameter('climb_down_clear_m', 0.3)  # B2 step 5 (BENCH-TUNE)
+        self.declare_parameter('d_center_up_m', 0.2)       # §3.8 centering (BENCH-TUNE)
+        self.declare_parameter('d_center_down_m', 0.2)     # §4.7 centering (BENCH-TUNE)
         self.declare_parameter('pick_reverse_settle_m', 0.15)  # (BENCH-TUNE)
         # --- rotation (cmd_vel timed unless z-as-yaw is confirmed) -----------
         self.declare_parameter('rotate_rate', 0.5)         # rad/s
         self.declare_parameter('rotate_via_relative_move', False)  # z==yaw UNCONFIRMED
+        # --- lateral centering / odom (handoff §6) ---------------------------
+        # center-then-rotate: null the odom y offset before a turn. Needs an
+        # odom source; with odom_topic empty the step self-skips (safe).
+        self.declare_parameter('odom_topic', '')           # e.g. '/odom' to enable
+        self.declare_parameter('recenter_before_rotate', False)  # needs odom_topic
+        self.declare_parameter('max_lateral_m', 0.15)      # clamp on a recenter nudge
+        self.declare_parameter('rezero_odom_after_climb', True)  # re-zero at good pose
+        self.declare_parameter('odom_rezero_cmd', 20)      # /fsm_command re-zero code
         # --- cmd_vel backend (only used when motion_backend == 'cmd_vel') ----
         self.declare_parameter('creep_speed', 0.05)        # m/s, climb creeps
         self.declare_parameter('transit_speed', 0.15)      # m/s, FORWARD_INIT
         self.declare_parameter('forward_init_s', 6.0)      # ~1 m approach
         self.declare_parameter('ir_timeout_s', 15.0)       # creep safety cap
-        self.declare_parameter('climb_up_seat_s', 2.0)     # B1 step 7 (timed)
-        self.declare_parameter('climb_down_clear_s', 3.0)  # B2 step 5 (timed)
+        self.declare_parameter('d_center_up_s', 2.0)       # §3.8 centering (timed)
+        self.declare_parameter('d_center_down_s', 2.0)     # §4.7 centering (timed)
         self.declare_parameter('pick_reverse_settle_s', 1.5)
         # --- mechanism timing -------------------------------------------------
-        self.declare_parameter('mech_dwell_s', 1.0)        # after each code
-        self.declare_parameter('climb_down_dwell_s', 1.0)  # B2 step 3 MAGIC NUMBER
+        self.declare_parameter('mech_dwell_s', 1.5)        # after each code (§ all)
         # --- mechanism codes (lift wheels: timed variants 110-115) -----------
         self.declare_parameter('climb_extend_both_cmd', 114)   # Both lifts up timed
         self.declare_parameter('front_lift_retract_cmd', 112)  # Front lift down timed
@@ -339,9 +448,9 @@ class TeensyCommandNode(Node):
         self.declare_parameter('front_lift_extend_cmd', 110)   # Front lift up timed
         self.declare_parameter('back_lift_extend_cmd', 111)    # Back lift up timed
         self.declare_parameter('both_lift_retract_cmd', 115)   # Both lifts down timed
-        # --- provisional pick-at-011 (UNTESTED, default off) -----------------
-        self.declare_parameter('enable_pick_at_011', False)
-        self.declare_parameter('pick_sequence_cmds', [0])   # /fsm_command codes
+        # --- pick (handoff §5: single fire of S1 = "Grab Put Up") ------------
+        self.declare_parameter('enable_pick', True)        # fire the pick on PICK_*
+        self.declare_parameter('pick_grab_cmd', 51)        # S1 grab-and-stow
         self.declare_parameter('pick_step_dwell_s', 2.0)
         # --- safety toggles ---------------------------------------------------
         self.declare_parameter('strict_climb_down_precheck', True)
@@ -355,6 +464,15 @@ class TeensyCommandNode(Node):
         self._relmove_pub = self.create_publisher(Vector3, "/relative_move", 10)
         self._mech_pub = self.create_publisher(Int32, "/fsm_command", 10)
 
+        # Optional odom feed for lateral centering (handoff §6). Only
+        # subscribed when odom_topic is set, so nothing is assumed by default.
+        self._odom_y = None
+        odom_topic = str(self._p('odom_topic'))
+        if odom_topic:
+            self.create_subscription(
+                Odometry, odom_topic, self._odom_callback, 10)
+            self.get_logger().info(f"lateral centering: tracking {odom_topic}")
+
         self._ir = 0
         self._steps = []
         self._step_idx = 0
@@ -364,9 +482,17 @@ class TeensyCommandNode(Node):
 
         self._tick_timer = self.create_timer(0.05, self._tick)  # 20 Hz
 
+        backend = str(self._p('motion_backend'))
+        creep = str(self._p('creep_backend'))
         self.get_logger().info(
-            "TeensyCommand bridge ready: /teensy/command -> IR-gated "
-            "/cmd_vel + /fsm_command choreography, acks on /teensy/ack")
+            f"TeensyCommand bridge ready (4-bit IR): /teensy/command -> "
+            f"motion_backend={backend}, creep_backend={creep}, "
+            f"/fsm_command choreography, acks on /teensy/ack")
+        if backend != 'cmd_vel' and creep == 'ceiling':
+            self.get_logger().warn(
+                "creep_backend=ceiling relies on /relative_move being "
+                "PRE-EMPTIBLE ({0,0,0} cuts a move short — OPEN item 2). "
+                "If mid-move stop is unreliable, set creep_backend:=nudge.")
 
     # ── param shorthand ──────────────────────────────────────────────────
 
@@ -379,7 +505,10 @@ class TeensyCommandNode(Node):
     # ── inbound ──────────────────────────────────────────────────────────
 
     def _ir_callback(self, msg: Int32):
-        self._ir = msg.data & 0b111
+        self._ir = msg.data & 0b1111
+
+    def _odom_callback(self, msg: Odometry):
+        self._odom_y = msg.pose.pose.position.y
 
     def _command_callback(self, msg: String):
         try:
@@ -472,10 +601,15 @@ class TeensyCommandNode(Node):
         self._cmd_vel_pub.publish(twist)
 
     def publish_stop(self):
-        # NOTE: zero Twist stops cmd_vel motion, but an in-flight
-        # /relative_move CANNOT be cancelled from here (preemption support
-        # unknown, spec 3.4) — on abort the robot may finish its last nudge.
+        # Zero Twist stops cmd_vel motion; {0,0,0} on /relative_move is the
+        # documented STOP (handoff §0) — send both so an abort halts either
+        # backend. /relative_move preemption is OPEN item 2 (bench-check).
         self._cmd_vel_pub.publish(Twist())
+        self._relmove_pub.publish(Vector3())
+
+    def publish_relmove_stop(self):
+        # {0,0,0} on /relative_move: STOP / cut an in-flight move short (§1).
+        self._relmove_pub.publish(Vector3())
 
     def publish_relative_move(self, dx, dy, dz, label):
         msg = Vector3()
@@ -515,15 +649,21 @@ class TeensyCommandNode(Node):
         return _DriveTimedStep(float(speed), 0.0, 0.0, float(seconds), label)
 
     def _creep_until_step(self, direction, predicate, label,
-                          stop_on_done=True):
-        """IR-gated creep: nudge loop (relative_move) or continuous creep
-        (cmd_vel). ``stop_on_done`` only matters for cmd_vel — nudges always
-        stop between moves."""
-        if self._use_relmove():
+                          ceiling=None, stop_on_done=True):
+        """IR-gated creep. relative_move backend: 'ceiling' (one long move +
+        {0,0,0} cut, with a per-step ``ceiling`` override for tipping edges)
+        or 'nudge' (0.1 m loop). cmd_vel backend: continuous timed creep.
+        ``stop_on_done`` only matters for cmd_vel — the relative_move backends
+        always stop between milestones."""
+        if not self._use_relmove():
+            return _DriveUntilIrStep(
+                direction * float(self._p('creep_speed')), predicate,
+                float(self._p('ir_timeout_s')), label, stop_on_done)
+        if str(self._p('creep_backend')) == 'nudge':
             return _NudgeUntilIrStep(direction, predicate, label)
-        return _DriveUntilIrStep(
-            direction * float(self._p('creep_speed')), predicate,
-            float(self._p('ir_timeout_s')), label, stop_on_done)
+        ceil = float(self._p('creep_ceiling_m')) if ceiling is None \
+            else float(ceiling)
+        return _CeilingUntilIrStep(direction, predicate, label, ceil)
 
     # ── command -> step list ─────────────────────────────────────────────
 
@@ -537,19 +677,27 @@ class TeensyCommandNode(Node):
                 degrees = int(command.split('_', 1)[1])
             except ValueError:
                 return None
+            steps = []
+            # handoff §6: center laterally, THEN turn (a y offset compounds
+            # through a rotation). Self-skips without an odom source.
+            if self._use_relmove() and self._p('recenter_before_rotate'):
+                steps.append(_LateralRecenterStep(f'before rotate {degrees}'))
             # planner degrees are CLOCKWISE -> negative yaw/wz
             if self._use_relmove() and self._p('rotate_via_relative_move'):
-                return [
+                steps += [
                     _WarnStep('rotate via /relative_move z: z==yaw is '
                               'UNCONFIRMED — verify against the node source'),
                     _RelativeMoveStep(0.0, 0.0,
                                       f'rotate {degrees} deg clockwise',
                                       dz=-math.radians(degrees)),
                 ]
+                return steps
             rate = float(self._p('rotate_rate'))
             duration = math.radians(degrees) / rate
-            return [_DriveTimedStep(0.0, 0.0, -rate, duration,
-                                    f'rotate {degrees} deg clockwise (timed)')]
+            steps.append(_DriveTimedStep(
+                0.0, 0.0, -rate, duration,
+                f'rotate {degrees} deg clockwise (timed)'))
+            return steps
         if command == 'CLIMB_UP':
             return self._climb_up_steps(pick=False, end_on=True)
         if command == 'CLIMB_DOWN':
@@ -566,55 +714,70 @@ class TeensyCommandNode(Node):
         return None
 
     def _pick_steps(self, where):
-        """The provisional pick firing (UNTESTED — OPEN item 5). Runs only
-        when enable_pick_at_011 is set; otherwise loudly skips so bench runs
-        can exercise the climb without the arm."""
-        if not self._p('enable_pick_at_011'):
+        """Fire the pick (handoff §5): S1 (/fsm_command = pick_grab_cmd,
+        default 51 "Grab Put Up") is the COMPLETE grab-and-stow routine, so a
+        pick is a SINGLE code fire. Skipped with a loud warning when
+        enable_pick is off, so a dry climb can run without the arm.
+        PROVISIONAL: firing mid-climb and gripper reach at this pose are
+        untested (OPEN item 6)."""
+        if not self._p('enable_pick'):
             return [_WarnStep(
-                f"PICK REQUESTED at {where} but enable_pick_at_011 is OFF "
+                f"PICK REQUESTED at {where} but enable_pick is OFF "
                 f"— climb continues WITHOUT collecting the KFS")]
-        steps = [_WarnStep(f"PROVISIONAL pick at {where} (untested)")]
-        codes = [int(c) for c in self._p('pick_sequence_cmds') if int(c) != 0]
-        if not codes:
-            steps.append(_WarnStep(
-                "pick_sequence_cmds is empty — no Teensy pick sequence is "
-                "defined yet; nothing fired"))
-        for code in codes:
-            steps.append(_MechStep(code, self._p('pick_step_dwell_s'),
-                                   f'pick sequence code {code}'))
-        return steps
+        code = int(self._p('pick_grab_cmd'))
+        return [
+            _WarnStep(f"pick at {where}: firing S1 grab-and-stow ({code}) "
+                      f"— PROVISIONAL, untested reach"),
+            _MechStep(code, float(self._p('pick_step_dwell_s')),
+                      f'pick: grab-and-stow S1 ({code})'),
+        ]
+
+    def _rezero_steps(self, where):
+        """Re-zero odometry at a confirmed-good pose (handoff §6) to stop
+        drift accumulating across the route. Off if rezero_odom_after_climb
+        is cleared."""
+        if not self._p('rezero_odom_after_climb'):
+            return []
+        code = int(self._p('odom_rezero_cmd'))
+        return [_MechStep(code, float(self._p('mech_dwell_s')),
+                          f're-zero odometry ({code}) — {where}')]
 
     def _climb_up_steps(self, pick, end_on):
-        """B1: tested IR progression 000 -> 001 -> 011 -> 111. Driving
-        forward onto a higher block; the edge sweeps back under the chassis,
-        adding support before removing it (no tipping window).
+        """B1 (handoff §3): readings 0 -> 1 -> 3 -> 7 -> 15. Driving forward
+        onto a higher block; the edge sweeps back under the chassis, adding
+        support before removing it (no tipping window). Fully sensor-closed
+        now that bit 3 senses the back deadwheel (no timed back-settle).
 
-        CAVEAT: the bit_set gates assume the reading is back at 000 when the
-        climb starts (as in the tested ground approach). If the sensors
-        still read the PREVIOUS block during block-to-block transit, these
-        gates fire instantly and must be changed to re-trigger variants —
-        bench-check the transit reading."""
+        CAVEAT: the bit_set gates assume the reading starts at 0 (as in the
+        tested ground approach). For block-to-block transit the sensors may
+        still read the previous block — bench-check the transit reading and
+        switch to re-trigger variants if the gates fire instantly."""
         creep = float(self._p('creep_speed'))
         dwell = float(self._p('mech_dwell_s'))
 
         steps = [
-            # 1. extend both lift wheels to raise the chassis for the climb
+            # 1. extend both lift wheels -> deadwheels off the ground (0)
             _MechStep(self._p('climb_extend_both_cmd'), dwell,
                       'extend both lift wheels (114)'),
-            # 2. creep until bit 0: front deadwheel landed on the higher block
+            # 2. creep until reading 1 (0001): front deadwheel landed
             self._creep_until_step(
                 +1, _bit_set(0),
-                'climb-up: front deadwheel landed (bit0, 001)'),
-            # 3. retract the FRONT lift wheel
+                'climb-up: front deadwheel landed (reading 1 / 0001)'),
+            # 3. retract the FRONT lift wheel (112)
             _MechStep(self._p('front_lift_retract_cmd'), dwell,
-                      'retract front lift wheel'),
-            # 4. creep until bit 1: edge reached middle deadwheel front (011)
+                      'retract front lift wheel (112)'),
+            # 4. creep until reading 3 (0011)
             self._creep_until_step(
                 +1, _bit_set(1),
-                'climb-up: edge at middle deadwheel front (bit1, 011)'),
+                'climb-up: edge at middle deadwheel front (reading 3 / 0011)'),
+            # 5. creep until reading 7 (0111): middle deadwheel landed
+            self._creep_until_step(
+                +1, _bit_set(2),
+                'climb-up: middle deadwheel landed (reading 7 / 0111)'),
         ]
+        # PICK POINT (§3.5): settled platform at reading 7.
         if pick:
-            steps += self._pick_steps('011 (half on the target block)')
+            steps += self._pick_steps('reading 7 (middle deadwheel landed)')
         if pick and not end_on:
             # reverse back to the previous block (PROVISIONAL choreography)
             steps += [
@@ -636,82 +799,86 @@ class TeensyCommandNode(Node):
             ]
             return steps
         steps += [
-            # 5. creep until bit 2: middle deadwheel landed (111)
-            self._creep_until_step(
-                +1, _bit_set(2),
-                'climb-up: middle deadwheel landed (bit2, 111)'),
-            # 6. retract the BACK lift wheel
+            # 6. retract the BACK lift wheel (113)
             _MechStep(self._p('back_lift_retract_cmd'), dwell,
-                      'retract back lift wheel'),
-            # 7. seat the back deadwheel — no sensor there, so known-distance
-            #    move (relative_move) or timed creep (cmd_vel)
+                      'retract back lift wheel (113)'),
+            # 7. creep until reading 15 (1111): back deadwheel landed — SENSED
+            #    now (bit 3), no timer
+            self._creep_until_step(
+                +1, _bit_set(3),
+                'climb-up: back deadwheel landed (reading 15 / 1111)'),
+            # 8. centering: forward D_center_up to center on the 120 cm block
             self._known_move_step(
-                self._p('climb_up_seat_m'), self._p('climb_up_seat_s'),
-                creep, 'climb-up: back-deadwheel seat (tune!)'),
+                self._p('d_center_up_m'), self._p('d_center_up_s'),
+                creep, 'climb-up: center on block (D_center_up)'),
         ]
+        steps += self._rezero_steps('climb-up complete, centered')
         return steps
 
     def _climb_down_steps(self, pick):
-        """B2 (provisional): deploy front support the instant the front
-        deadwheel leaves the edge, to avoid the blind tipping window (no
-        sensor between bit 0 and bit 1).
+        """B2 (handoff §4): readings 1111 -> 1110 -> 1100 -> 1000 -> 0000.
+        Sensors clear front-to-back as each point goes over the upper edge;
+        0000 = all deadwheels off the upper block, riding on both deployed
+        lift wheels (airborne) = SAFETY GATE to retract.
 
-        KEY UNTESTED ASSUMPTION: safety depends on the front lift wheel
-        reaching the lower block BEFORE the CoM (~middle deadwheel) crosses
-        the pillar edge. In the relative_move backend the lift extends while
-        the robot is STATIONARY between nudges (overshoot past the edge is
-        bounded by one nudge) — safer than the cmd_vel race, but the bound
-        still needs a bench check. In the cmd_vel backend the original race
-        applies: keep creep_speed low. Fallbacks if it can't be guaranteed:
-        (a) dedicated front-lift-wheel grounded sensor, or (b) gate the
-        descent by odometry distance instead of bit 1.
+        Front-lift deploy waits for bit 1 to clear: the front lift wheel sits
+        between the front and middle deadwheels, so it only clears the upper
+        edge around when bit 1 clears — deploying earlier presses it against
+        the upper block. TIPPING NOTE (§4.3): in the bit0->bit1 window the
+        front is unsupported (held by middle+back deadwheels), safe only if
+        the CoM is behind the middle deadwheel — bench-check on first descent.
+        The bit0/bit1 creeps use the SHORT ceiling so a missed IR read at the
+        tipping edge cannot run the robot off the block.
         """
         creep = float(self._p('creep_speed'))
         dwell = float(self._p('mech_dwell_s'))
-        # cmd_vel backend keeps creeping while the lifts extend (dwell 0,
-        # the original race); nudge backend is stationary here, so give the
-        # extension a full dwell before the next nudge.
-        lift_deploy_dwell = dwell if self._use_relmove() else 0.0
+        short = float(self._p('creep_ceiling_short_m'))
 
         steps = [
-            # 1. must start fully seated on the upper block (111)
-            _CheckIrStep(lambda ir, state: ir == 0b111,
-                         'climb-down start: fully on upper block (111)',
+            # 1. must start fully seated on the upper block (1111)
+            _CheckIrStep(lambda ir, state: ir == 0b1111,
+                         'climb-down start: fully on upper block (1111)',
                          strict=bool(self._p('strict_climb_down_precheck'))),
-            # 2a. creep until bit 0 LOSES ground (front deadwheel in air, 110)
+            # 2. creep SLOWLY until bit 0 clears (1110): front deadwheel over
+            #    the edge. SHORT ceiling at the tipping edge.
             self._creep_until_step(
                 +1, _bit_cleared(0),
-                'climb-down: front deadwheel over the edge (bit0 low, 110)',
-                stop_on_done=False),
-            # 2b. extend the front lift wheel toward the lower block
-            _MechStep(self._p('front_lift_extend_cmd'), lift_deploy_dwell,
-                      'extend front lift wheel down'),
-            # 3. creep until bit 1 re-triggers on the lower block, then dwell
-            #    (post-110 IR progression PROVISIONAL — OPEN item 2)
+                'climb-down: front deadwheel over the edge (1110)',
+                ceiling=short, stop_on_done=False),
+            # 3. creep until bit 1 clears (1100), THEN deploy the FRONT lift
             self._creep_until_step(
-                +1, _bit_retriggered(1),
-                'climb-down: bit1 re-triggered on lower block'),
-            _WaitStep(float(self._p('climb_down_dwell_s')),
-                      'climb-down: settle/level dwell (MAGIC NUMBER, tune!)'),
+                +1, _bit_cleared(1),
+                'climb-down: middle-front over the edge (1100)',
+                ceiling=short, stop_on_done=False),
+            _MechStep(self._p('front_lift_extend_cmd'), dwell,
+                      'deploy front lift wheel down (110)'),
         ]
+        # descent pick point: front now supported on the lower block.
         if pick:
-            steps += self._pick_steps('descent dwell (front on lower block)')
+            steps += self._pick_steps('descent (front on lower block)')
         steps += [
-            # 4. creep until bit 2 re-triggers, then extend the BACK lift
+            # 4. creep until bit 2 clears (1000): middle deadwheel over edge
             self._creep_until_step(
-                +1, _bit_retriggered(2),
-                'climb-down: bit2 re-triggered on lower block'),
-            _MechStep(self._p('back_lift_extend_cmd'), lift_deploy_dwell,
-                      'extend back lift wheel down'),
-            # 5. clear the upper block (no sensors remain behind bit2):
-            #    known-distance move (relative_move) or timed creep (cmd_vel)
+                +1, _bit_cleared(2),
+                'climb-down: middle deadwheel over the edge (1000)'),
+            # 5. deploy the BACK lift wheel down (111)
+            _MechStep(self._p('back_lift_extend_cmd'), dwell,
+                      'deploy back lift wheel down (111)'),
+            # 6. creep until reading 0000: back deadwheel off the upper block,
+            #    airborne on both lift wheels = SAFETY GATE
+            self._creep_until_step(
+                +1, lambda ir, state: ir == 0,
+                'climb-down: airborne on both lifts (0000 SAFETY GATE)'),
+            # 7. centering (still RAISED at 0000): forward D_center_down to
+            #    center over the lower block. Forward-FIRST.
             self._known_move_step(
-                self._p('climb_down_clear_m'), self._p('climb_down_clear_s'),
-                creep, 'climb-down: clear the upper block (tune!)'),
-            # 6. retract BOTH lift wheels
+                self._p('d_center_down_m'), self._p('d_center_down_s'),
+                creep, 'climb-down: center over lower block (D_center_down)'),
+            # 8. retract BOTH lift wheels (115): lower straight down. Second.
             _MechStep(self._p('both_lift_retract_cmd'), dwell,
-                      'retract both lift wheels'),
+                      'retract both lift wheels (115)'),
         ]
+        steps += self._rezero_steps('climb-down complete, centered')
         return steps
 
 
